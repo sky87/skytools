@@ -12,9 +12,8 @@ The original repository is unchanged.
 ## Install on a target machine
 
 Download the executable for your OS and architecture, along with `SHA256SUMS`,
-from [GitHub Releases](https://github.com/sky87/skytools/releases). This repository
-is private: sign in to GitHub to download assets, or use an already authenticated
-`gh` CLI. No anonymous `curl` download is available for private release assets.
+from [GitHub Releases](https://github.com/sky87/skytools/releases). Release assets
+are public and can be downloaded without a GitHub account or access token.
 
 | Platform | Asset |
 | --- | --- |
@@ -23,11 +22,12 @@ is private: sign in to GitHub to download assets, or use an already authenticate
 | macOS Intel | `skytools_darwin_amd64` |
 | macOS Apple Silicon | `skytools_darwin_arm64` |
 
-For example, on a target Linux ARM64 machine with `gh` already available:
+For example, on a target Linux ARM64 machine:
 
 ```sh
-gh release download --repo sky87/skytools \
-  --pattern skytools_linux_arm64 --pattern SHA256SUMS
+release=https://github.com/sky87/skytools/releases/latest/download
+curl --fail --location "$release/skytools_linux_arm64" -o skytools_linux_arm64
+curl --fail --location "$release/SHA256SUMS" -o SHA256SUMS
 grep '  skytools_linux_arm64$' SHA256SUMS | sha256sum --check -
 mkdir -p "$HOME/.local/bin"
 install -m 0755 skytools_linux_arm64 "$HOME/.local/bin/skytools"
@@ -233,7 +233,7 @@ on Linux amd64 and arm64.
 ## Releases
 
 Pushing a `v*` tag runs Docker checks, cross-compiles Linux/macOS executables for
-amd64/arm64, and publishes them with `SHA256SUMS` to a private GitHub release:
+amd64/arm64, and publishes them with `SHA256SUMS` to a public GitHub release:
 
 ```sh
 git tag v0.1.0
