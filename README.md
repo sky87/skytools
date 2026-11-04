@@ -51,6 +51,7 @@ skytools self-update             # update skytools itself from GitHub's latest r
 skytools status                  # fast local installed/missing/incomplete inventory
 skytools status --versions       # explicitly run version commands
 skytools deps --only rust,btop   # check system packages without installing anything
+skytools deps install --only rust,btop # explicitly install prerequisites as root
 skytools list                    # show names accepted by --only
 skytools ensure --only uv,go,gh   # install a subset
 skytools ensure --only pi        # also ensures Node.js and pnpm
@@ -133,7 +134,8 @@ old name. When downloading the binary yourself, an optional equivalent is
 Python versions can be installed with `uv python install` after setup. Operating
 system packages from the old devcontainer (editors, C/C++ compilers, LaTeX,
 document tools, native libraries) remain OS prerequisites rather than managed
-home installations. skytools never invokes `sudo` or a system package manager.
+home installations. skytools never invokes `sudo`. Only the explicit
+`deps install` command invokes the platform's system package manager.
 
 ## Release selection
 
@@ -183,9 +185,17 @@ The skytools executable itself needs no language runtime or shared Go libraries.
 Before Install/Update starts any installer, skytools checks the selected tools'
 system packages, including automatically selected tool dependencies such as Node
 for pi. Missing packages stop the operation and produce an `apt-get install`
-command. skytools never runs that command or escalates privileges. Run
+command. `ensure`/`update` never run it or escalate privileges. Run
 `skytools deps` (optionally with `--only`) to inspect requirements without changing
 your home; a nonzero exit means packages are missing or checks failed.
+
+Use `skytools deps install` as root to install prerequisites for all packages, or
+pass `--only` for a subset. The dependency graph lives in code: tool dependencies
+are resolved transitively before collecting system requirements. The Debian
+installer checks installed packages, refreshes apt indexes once when needed,
+installs a deduplicated list of missing packages, and verifies the result. It does
+not install user toolchains, modify shell files, or keep an installation manifest.
+The plain `deps` command remains read-only. Explicit `--only all` is supported.
 
 The model uses generic capabilities such as an HTTP client, C build tools, and
 SSL runtime. A platform provider maps these to package names. The initial provider

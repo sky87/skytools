@@ -23,6 +23,7 @@ Commands:
   update       Ensure tools exist, then update them
   status       Show a fast, read-only local package inventory
   deps         Check system prerequisites and show missing Debian packages
+  deps install Install selected tools' system prerequisites (root on Debian)
   ui           Open the interactive package dashboard
   list         List tool names accepted by --only
   env          Print shell environment; use: eval "$(skytools env)"
@@ -31,12 +32,12 @@ Commands:
   version      Show the skytools version
 
 Options for ensure, update, status, deps:
-  --only   Comma-separated tool names; default: all (pi also requires node)
+  --only   Comma-separated tool names; default: all (dependencies included)
 
 Options for status:
   --versions  Run managed tools to query their versions (may be slow)
 
-Installations live under $HOME. No sudo or system package changes.
+Tools install under $HOME. Only explicit deps install changes system packages.
 `
 
 func Run(ctx context.Context, args []string, out, errOut io.Writer, version string) int {
@@ -44,6 +45,10 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, version stri
 		args = []string{"ui"}
 	}
 	command := args[0]
+	installDeps := command == "deps" && len(args) > 1 && args[1] == "install"
+	if installDeps {
+		args = append([]string{"deps"}, args[2:]...)
+	}
 	if command == "--help" || command == "-h" || command == "help" {
 		fmt.Fprint(out, usage)
 		return 0
@@ -114,6 +119,14 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, version stri
 		return 0
 	}
 	if command == "deps" {
+		if installDeps {
+			if err := m.installSystemDependencies(selected); err != nil {
+				fmt.Fprintln(errOut, "skytools:", err)
+				return 1
+			}
+			fmt.Fprintln(out, "All required system packages are installed.")
+			return 0
+		}
 		report, err := m.checkSystemDependencies("update", selected)
 		if err != nil {
 			fmt.Fprintln(errOut, "skytools:", err)
@@ -222,34 +235,7 @@ type versionCommand struct {
 }
 
 func selectTools(all []tool, only string, dependencies bool) ([]tool, error) {
-	if only == "" {
-		return all, nil
-	}
-	wanted := map[string]bool{}
-	for _, name := range strings.Split(only, ",") {
-		name = strings.TrimSpace(name)
-		found := false
-		for _, t := range all {
-			if t.name == name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil, fmt.Errorf("unknown tool %q; run skytools list", name)
-		}
-		wanted[name] = true
-	}
-	if dependencies && wanted["pi"] {
-		wanted["node"] = true
-	}
-	var result []tool
-	for _, t := range all {
-		if wanted[t.name] {
-			result = append(result, t)
-		}
-	}
-	return result, nil
+	return selectToolsWithRequirements(all, only, dependencies, packageRequirements)
 }
 
 func (m *manager) platform() error {

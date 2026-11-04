@@ -3,8 +3,10 @@ package skytools
 import (
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
+	"time"
 )
 
 type debianRequirement struct {
@@ -46,9 +48,12 @@ var debianRequirements = map[string]debianRequirement{
 type debianPackageProvider struct {
 	architecture string
 	query        func(context.Context) (string, error)
+	run          func(context.Context, ...string) error
 }
 
 func (p debianPackageProvider) Check(ctx context.Context, deps []SystemDependency) (SystemDependencyReport, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	report := SystemDependencyReport{Platform: "Debian/dpkg"}
 	output, err := p.query(ctx)
 	if err != nil {
@@ -92,4 +97,35 @@ func (p debianPackageProvider) Check(ctx context.Context, deps []SystemDependenc
 		report.InstallCommand = "sudo apt-get install --no-install-recommends " + strings.Join(report.packageNames(), " ")
 	}
 	return report, nil
+}
+
+func (p debianPackageProvider) Install(ctx context.Context, deps []SystemDependency) error {
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("deps install requires root on Debian; run it as root during the image build")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	report, err := p.Check(ctx, deps)
+	if err != nil || len(report.Missing) == 0 {
+		return err
+	}
+	if p.run == nil {
+		return fmt.Errorf("Debian package installer is unavailable")
+	}
+	if err := p.run(ctx, "/usr/bin/apt-get", "update"); err != nil {
+		return fmt.Errorf("refresh apt package indexes: %w", err)
+	}
+	args := append([]string{"/usr/bin/apt-get", "install", "-y", "--no-install-recommends"}, report.packageNames()...)
+	if err := p.run(ctx, args...); err != nil {
+		return fmt.Errorf("install system prerequisites: %w", err)
+	}
+	verified, err := p.Check(ctx, deps)
+	if err != nil {
+		return err
+	}
+	if len(verified.Missing) > 0 {
+		return &systemDependenciesError{verified}
+	}
+	return nil
 }

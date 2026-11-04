@@ -28,6 +28,11 @@ type SystemPackageProvider interface {
 	Check(context.Context, []SystemDependency) (SystemDependencyReport, error)
 }
 
+// Installation is an explicit capability, separate from read-only checks.
+type SystemPackageInstaller interface {
+	Install(context.Context, []SystemDependency) error
+}
+
 type systemDependenciesError struct{ report SystemDependencyReport }
 
 func (e *systemDependenciesError) Error() string {
@@ -48,9 +53,9 @@ func (r SystemDependencyReport) packageNames() []string {
 	return names
 }
 
-type toolSystemDependencies struct{ Install, Runtime []string }
+type toolRequirements struct{ Tools, Install, Runtime []string }
 
-var systemRequirements = map[string]toolSystemDependencies{
+var packageRequirements = map[string]toolRequirements{
 	"uv":       {Install: []string{"certificates", "http-client", "tar", "gzip"}},
 	"rust":     {Install: []string{"certificates", "http-client", "tar", "gzip", "xz"}, Runtime: []string{"c-build", "pkg-config"}},
 	"node":     {Install: []string{"certificates", "http-client", "bash", "git", "tar", "xz"}, Runtime: []string{"cxx-runtime"}},
@@ -65,14 +70,14 @@ var systemRequirements = map[string]toolSystemDependencies{
 	"claude":   {Install: []string{"certificates", "http-client", "bash"}, Runtime: []string{"cxx-runtime"}},
 	"codex":    {Install: []string{"certificates", "http-client", "tar", "gzip"}},
 	"opencode": {Install: []string{"certificates", "http-client", "bash", "tar", "gzip", "unzip"}},
-	"pi":       {Install: []string{"certificates"}},
+	"pi":       {Tools: []string{"node"}, Install: []string{"certificates"}},
 	"btop":     {Install: []string{"certificates"}, Runtime: []string{"terminfo"}},
 }
 
 func dependenciesFor(command string, tools []tool, states []PackageStatus) []SystemDependency {
 	byCapability := map[string][]string{}
 	for i, t := range tools {
-		requirements := systemRequirements[t.name]
+		requirements := packageRequirements[t.name]
 		ids := append([]string{}, requirements.Runtime...)
 		if command == "update" || i >= len(states) || !states[i].Installed {
 			ids = append(ids, requirements.Install...)
@@ -97,6 +102,20 @@ func dependenciesFor(command string, tools []tool, states []PackageStatus) []Sys
 
 func (m *manager) checkSystemDependencies(command string, tools []tool) (SystemDependencyReport, error) {
 	deps := dependenciesFor(command, tools, m.scan(tools))
+	deps = configuredSystemDependencies(deps)
+	if len(deps) == 0 {
+		return SystemDependencyReport{}, nil
+	}
+	provider, err := m.systemPackageProvider()
+	if err != nil {
+		return SystemDependencyReport{}, err
+	}
+	ctx, cancel := context.WithTimeout(m.ctx, 5*time.Second)
+	defer cancel()
+	return provider.Check(ctx, deps)
+}
+
+func configuredSystemDependencies(deps []SystemDependency) []SystemDependency {
 	if os.Getenv("SKY_TOOLS_DISABLE_OPAM_SANDBOX") == "1" {
 		filtered := deps[:0]
 		for _, dep := range deps {
@@ -106,22 +125,47 @@ func (m *manager) checkSystemDependencies(command string, tools []tool) (SystemD
 		}
 		deps = filtered
 	}
-	if len(deps) == 0 {
-		return SystemDependencyReport{}, nil
-	}
+	return deps
+}
+
+func (m *manager) systemPackageProvider() (SystemPackageProvider, error) {
 	provider := m.systemProvider
 	if provider == nil {
 		id, like := nativeValue("/etc/os-release", "ID"), nativeValue("/etc/os-release", "ID_LIKE")
 		if runtime.GOOS != "linux" || !(id == "debian" || id == "ubuntu" || containsWord(like, "debian") || containsWord(like, "ubuntu")) {
-			return SystemDependencyReport{}, fmt.Errorf("system dependency checks currently support Debian-based Linux only (detected %s %s)", runtime.GOOS, id)
+			return nil, fmt.Errorf("system dependencies currently support Debian-based Linux only (detected %s %s)", runtime.GOOS, id)
 		}
-		provider = debianPackageProvider{architecture: runtime.GOARCH, query: func(ctx context.Context) (string, error) {
-			return m.outputContext(ctx, "/usr/bin/dpkg-query", "--show", "--showformat=${Package}\t${Architecture}\t${db:Status-Status}\n")
-		}}
+		provider = debianPackageProvider{
+			architecture: runtime.GOARCH,
+			query: func(ctx context.Context) (string, error) {
+				return m.outputContext(ctx, "/usr/bin/dpkg-query", "--show", "--showformat=${Package}\t${Architecture}\t${db:Status-Status}\n")
+			},
+			run: func(ctx context.Context, args ...string) error {
+				cmd, err := m.command(ctx, args...)
+				if err != nil {
+					return err
+				}
+				cmd.Env = setEnv(cmd.Env, "DEBIAN_FRONTEND", "noninteractive")
+				cmd.Stdout, cmd.Stderr = m.out, m.errOut
+				return cmd.Run()
+			},
+		}
 	}
-	ctx, cancel := context.WithTimeout(m.ctx, 5*time.Second)
-	defer cancel()
-	return provider.Check(ctx, deps)
+	return provider, nil
+}
+
+func (m *manager) installSystemDependencies(tools []tool) error {
+	provider, err := m.systemPackageProvider()
+	if err != nil {
+		return err
+	}
+	installer, ok := provider.(SystemPackageInstaller)
+	if !ok {
+		return fmt.Errorf("system package provider does not support installation")
+	}
+	deps := configuredSystemDependencies(dependenciesFor("update", tools, nil))
+	m.log("installing system prerequisites for %s", toolNames(tools))
+	return installer.Install(m.ctx, deps)
 }
 
 func containsWord(text, word string) bool {
@@ -143,7 +187,7 @@ func (m *manager) preflight(command string, selected []tool) error {
 	}
 	m.log("missing system packages (%s):", report.Platform)
 	for _, dep := range report.Missing {
-		m.log("  %s: %s (needed by %s)", dep.Capability, strings.Join(dep.Packages, " or "), strings.Join(dep.RequiredBy, ", "))
+		m.log("  %s: %s (needed by %s)", dep.Capability, strings.Join(dep.Packages, ", "), strings.Join(dep.RequiredBy, ", "))
 	}
 	m.log("run: %s", report.InstallCommand)
 	m.log("inspect requirements with: skytools deps --only %s", toolNames(selected))

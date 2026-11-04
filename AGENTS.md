@@ -22,7 +22,8 @@ from Bash to Go. Keep that source repository unchanged unless asked otherwise.
 
 Preserve the `ensure` (no updates), `update` (explicit updates), and `status`
 commands and existing home locations when changing the manager. Tools must run
-as the target user; never invoke sudo or install OS packages from the application.
+as the target user; never invoke sudo. Only the explicit `deps install` command
+may install OS packages, using the platform provider (root required on Debian).
 Explain OS prerequisites in README.md. Avoid overwriting user dotfiles and keep
 shell configuration idempotent. Verify upstream SHA-256 checksums where available;
 stage archive installs before changing active pointers. Keep Linux amd64/arm64
@@ -60,7 +61,10 @@ Model system prerequisites as generic capabilities with platform providers.
 Only the Debian-family provider is implemented initially. Install/Update must
 check all selected tools' prerequisites before starting installers, accepting only
 installed native/all-architecture dpkg packages. Report missing packages and an
-apt command; never run it automatically. Keep `deps` read-only. Include automatic
+apt command; never run it automatically. Keep `deps` read-only; `deps install` is
+the explicit opt-in installation path. Declare tool dependencies in code and
+resolve their transitive closure before checking or installing prerequisites.
+Include automatic
 tool dependencies such as Node for pi. btop uses its checksummed official Linux
 release binary in `~/.local/bin/btop`.
 

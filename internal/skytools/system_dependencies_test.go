@@ -3,6 +3,8 @@ package skytools
 import (
 	"context"
 	"errors"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -28,10 +30,67 @@ func TestDebianDependenciesUseInstalledNativePackagesAndRuntimeABIs(t *testing.T
 	}
 }
 
+func TestDebianInstallRunsOneDeduplicatedTransactionAndVerifies(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("Docker root installer test")
+	}
+	output := ""
+	var commands [][]string
+	queries := 0
+	p := debianPackageProvider{architecture: "amd64", query: func(context.Context) (string, error) { queries++; return output, nil }}
+	p.run = func(_ context.Context, args ...string) error {
+		commands = append(commands, append([]string{}, args...))
+		if len(commands) == 2 {
+			output = "curl\tamd64\tinstalled\ngit\tamd64\tinstalled\n"
+		}
+		return nil
+	}
+	deps := []SystemDependency{{"git", []string{"node"}}, {"http-client", []string{"uv", "rust"}}, {"http-client", []string{"node"}}}
+	if err := p.Install(context.Background(), deps); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{{"/usr/bin/apt-get", "update"}, {"/usr/bin/apt-get", "install", "-y", "--no-install-recommends", "curl", "git"}}
+	if !reflect.DeepEqual(commands, want) || queries != 2 {
+		t.Fatalf("commands=%v queries=%d", commands, queries)
+	}
+	commands = nil
+	if err := p.Install(context.Background(), deps); err != nil || len(commands) != 0 {
+		t.Fatalf("not idempotent: %v %v", commands, err)
+	}
+}
+
+func TestDebianInstallStopsOnFailureAndNeverClaimsMissingPackagesWereInstalled(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("Docker root installer test")
+	}
+	for _, failAt := range []int{1, 2, 0} {
+		calls := 0
+		p := debianPackageProvider{architecture: "amd64", query: func(context.Context) (string, error) { return "", nil }, run: func(ctx context.Context, args ...string) error {
+			calls++
+			if calls == failAt {
+				return errors.New("fixture failure")
+			}
+			return nil
+		}}
+		if err := p.Install(context.Background(), []SystemDependency{{Capability: "git"}}); err == nil {
+			t.Fatal("installation failure was ignored")
+		}
+		if failAt == 1 && calls != 1 {
+			t.Fatal("continued after apt update failed")
+		}
+	}
+	p := debianPackageProvider{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := p.Install(ctx, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation ignored: %v", err)
+	}
+}
+
 func TestDependenciesCoverRegistryAndIncludeAutomaticDependencies(t *testing.T) {
 	m := testManager(t)
 	for _, tool := range m.tools() {
-		if _, ok := systemRequirements[tool.name]; !ok {
+		if _, ok := packageRequirements[tool.name]; !ok {
 			t.Errorf("missing prerequisite model for %s", tool.name)
 		}
 	}
