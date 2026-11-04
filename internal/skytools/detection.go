@@ -105,6 +105,9 @@ func distributionRoot(binary string) string {
 }
 
 func jdkVersion(root string) string {
+	if version := nativeValue(filepath.Join(root, "release"), "IMPLEMENTOR_VERSION"); strings.HasPrefix(version, "Corretto-") {
+		return strings.TrimPrefix(version, "Corretto-")
+	}
 	return nativeValue(filepath.Join(root, "release"), "JAVA_VERSION")
 }
 func correttoJDK(root string) bool {
@@ -149,6 +152,8 @@ func (m *manager) managedStatus(name string) PackageStatus {
 		paths = []string{".fzf/bin/fzf"}
 	case "gh":
 		paths = []string{".local/bin/gh"}
+	case "btop":
+		paths = []string{".local/bin/btop"}
 	case "claude":
 		paths = []string{".local/bin/claude"}
 	case "codex":
@@ -312,7 +317,7 @@ func (m *manager) systemStatus(name string) PackageStatus {
 	commands := map[string][]string{
 		"uv": {"uv"}, "rust": {"rustc", "cargo"}, "node": {"node", "npm", "pnpm"},
 		"bun": {"bun"}, "dotnet": {"dotnet"}, "go": {"go"}, "jdk": {"java", "javac"},
-		"fzf": {"fzf"}, "gh": {"gh"}, "ocaml": {"opam", "ocaml", "ocamlc"},
+		"fzf": {"fzf"}, "gh": {"gh"}, "btop": {"btop"}, "ocaml": {"opam", "ocaml", "ocamlc"},
 		"lean": {"lean"}, "claude": {"claude"}, "codex": {"codex"}, "opencode": {"opencode"}, "pi": {"pi"},
 	}[name]
 	s := PackageStatus{Origin: "system"}

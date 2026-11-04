@@ -36,9 +36,10 @@ eval "$("$HOME/.local/bin/skytools" env)"
 ```
 
 On macOS, verify the matching asset with `shasum -a 256 --check` instead of
-`sha256sum --check`. macOS builds are cross-compiled in Docker; native macOS
-installer execution is not covered by the Linux container tests. Windows and
-Alpine/musl tool installations are not currently supported.
+`sha256sum --check`. macOS builds are cross-compiled in Docker and support the
+dashboard, inventory, and shell setup. Install/Update prerequisite checks currently
+support Debian-based Linux only. Windows and Alpine/musl tool installations are
+not currently supported.
 
 ## Commands
 
@@ -48,6 +49,7 @@ skytools ensure                  # install missing tools; leave installed versio
 skytools update                  # ensure tools exist, then explicitly update them
 skytools status                  # fast local installed/missing/incomplete inventory
 skytools status --versions       # explicitly run version commands
+skytools deps --only rust,btop   # check system packages without installing anything
 skytools list                    # show names accepted by --only
 skytools ensure --only uv,go,gh   # install a subset
 skytools ensure --only pi        # also ensures Node.js and pnpm
@@ -55,7 +57,9 @@ skytools setup                   # configure the shell without installing tools
 eval "$(skytools env)"           # activate the environment in the current shell
 ```
 
-The dashboard shows installed, missing, and incomplete packages. Select an
+The dashboard shows installed versions alongside the latest upstream LTS (or
+stable version for tools without LTS), with available updates highlighted in cyan.
+It distinguishes missing and incomplete packages. Select an
 Install or Update action, choose packages, then run the selection. Installation
 output stays visible while the keyboard remains responsive, and cancelling an
 operation returns to the dashboard. Without an interactive terminal, running
@@ -64,20 +68,24 @@ operation returns to the dashboard. Without an interactive terminal, running
 Use the arrow keys, Tab, or Shift-Tab to move focus. Space or Enter toggles an
 eligible package; installed rows remain focusable to inspect their version and
 path. `i` selects Install missing, `u` selects Update, `a` selects or clears all
-eligible packages, and `r` refreshes local inventory. Focus Run selected and
+eligible packages, and `r` refreshes inventory and upstream versions. Focus Run selected and
 press Enter to start. Ctrl-C cancels a running action and returns to the
 dashboard, or quits when idle. `q` quits after cancelling any active action.
 
-Inventory detection reads executable paths, symlinks, and upstream toolchain
-metadata. It runs no version commands, makes no network requests, and keeps no
-skytools installation manifest. Versions are shown when available from native
-files; `status --versions` provides explicit executable version queries.
+The first dashboard frame uses executable paths, symlinks, and native toolchain
+metadata. This local detection performs no execution or network requests. Once
+the screen is visible, four background workers fill in missing installed versions
+with bounded version commands and fetch current upstream releases. Checks are
+cancellable; offline failures and unknown comparisons never produce update alerts.
+Focus a row for full versions and error details. There is no installation manifest
+or persistent version cache. `status` and redirected output remain local and
+filesystem-only; `status --versions` explicitly queries executables.
 Complete system/PATH installations are recognized too. `ensure` keeps them;
 Update installs a managed copy under your home directory.
 
 `ensure` and `update` serialize changes with a per-home lock. A failed tool
 installation stops the command with an error; rerun it after fixing the cause.
-Release archives for Go, Corretto, and GitHub CLI are checked against upstream
+Release archives for Go, Corretto, GitHub CLI, and btop are checked against upstream
 SHA-256 checksums, extracted in staging directories, and activated after validation.
 Other tools use their upstream installers or package managers over HTTPS.
 
@@ -111,6 +119,7 @@ old name. When downloading the binary yourself, an optional equivalent is
 | `codex` | Codex | `~/.local/bin/codex` |
 | `opencode` | OpenCode | `~/.opencode/bin` |
 | `pi` | pi coding agent | `~/.local/share/pnpm` |
+| `btop` | btop resource monitor, latest stable Linux binary | `~/.local/bin/btop` |
 
 Python versions can be installed with `uv python install` after setup. Operating
 system packages from the old devcontainer (editors, C/C++ compilers, LaTeX,
@@ -162,11 +171,28 @@ tools are installed into that user's home.
 ## Target prerequisites
 
 The skytools executable itself needs no language runtime or shared Go libraries.
-Upstream installers need a POSIX environment with Bash, CA certificates, curl,
-git, tar/gzip, unzip, and xz. .NET also needs its platform's ICU/OpenSSL/runtime
-libraries. OCaml builds from source and needs a C/C++ toolchain, make, m4,
-pkg-config, and GMP development files. macOS needs the Command Line Tools for
-compiling OCaml and other native packages.
+Before Install/Update starts any installer, skytools checks the selected tools'
+system packages, including automatically selected tool dependencies such as Node
+for pi. Missing packages stop the operation and produce an `apt-get install`
+command. skytools never runs that command or escalates privileges. Run
+`skytools deps` (optionally with `--only`) to inspect requirements without changing
+your home; a nonzero exit means packages are missing or checks failed.
+
+The model uses generic capabilities such as an HTTP client, C build tools, and
+SSL runtime. A platform provider maps these to package names. The initial provider
+supports Debian/Ubuntu and derivatives identified by `/etc/os-release`. It queries
+dpkg once, accepting only configured packages for the native architecture or
+architecture-independent packages. Other platforms report that prerequisite
+checks are unsupported before installation begins.
+
+Installer prerequisites include Bash, CA certificates, curl, git, tar/gzip, unzip,
+and xz, depending on the tool. Rust/OCaml/Lean also need native build tools.
+.NET needs ICU, OpenSSL 3, the C/C++ and Kerberos runtimes, timezone data, and zlib.
+OCaml needs m4, pkg-config, GMP development files, and bubblewrap (unless opam
+sandboxing is explicitly disabled as described above). btop needs terminal data
+(`ncurses-base`). Existing complete tools skip installer-only prerequisites on
+`ensure`, while runtime prerequisites are still checked. For missing ICU/OpenSSL,
+the suggested development packages pull in the distribution's runtime package.
 
 The `runtime` Docker stage contains basic installer utilities and .NET runtime
 libraries, with no managed language toolchains preinstalled. The `full` stage
@@ -183,7 +209,7 @@ format operation, test, and application execution below happens inside Docker.
 make fmt               # gofmt inside Docker
 make test              # enforce stdlib-only modules, formatting, go vet, unit tests
 make smoke             # above + static executable in a minimal non-root container
-make integration       # install uv/Go/gh, repeat ensure offline in the same test home
+make integration       # install uv/Go/gh/btop, repeat ensure offline in the same test home
 make full-integration  # install the complete tool set in an isolated Docker volume
 make build             # native Linux executable exported to dist/skytools
 make release VERSION=v0.1.0  # four executables + SHA256SUMS in dist/
@@ -196,7 +222,11 @@ validation, and lock contention. Terminal tests use Linux pseudo-terminals for
 raw input, resize, cancellation, rendering, and restoration. Dashboard tests
 also exercise actual keyboard-driven installation and cancellation using local
 installer fixtures. Inventory benchmarks and sentinel executables check that
-detection stays filesystem-only. `GOPROXY=off` and `GOSUMDB=off` are set in the
+detection stays filesystem-only. Version tests cover LTS selection, update
+comparisons, bounded workers, offline checks, stale refresh results, and actual
+terminal responsiveness/restoration. Dependency fixtures cover missing,
+unconfigured, and foreign-architecture packages and prevent installer execution
+after a failed preflight. `GOPROXY=off` and `GOSUMDB=off` are set in the
 Go container. CI runs the minimal-container checks and real subset installation
 on Linux amd64 and arm64.
 

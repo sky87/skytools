@@ -63,6 +63,7 @@ func (m *manager) tools() []tool {
 		{"codex", "Codex", missing(".local/bin/codex", codex), codex, []versionCommand{version("codex", ".local/bin/codex", "--version")}},
 		{"opencode", "OpenCode", missing(".opencode/bin/opencode", opencode), opencode, []versionCommand{version("opencode", ".opencode/bin/opencode", "--version")}},
 		{"pi", "pi coding agent", m.ensurePi, command("pnpm", "add", "--global", "--ignore-scripts", "@earendil-works/pi-coding-agent@latest"), []versionCommand{{"pi", []string{"pi", "--version"}}}},
+		{"btop", "btop resource monitor", missing(".local/bin/btop", m.installBtop), m.installBtop, []versionCommand{version("btop", ".local/bin/btop", "--version")}},
 	}
 }
 

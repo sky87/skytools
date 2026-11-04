@@ -12,10 +12,10 @@ integration: smoke
 	docker build --target runtime -t skytools-runtime .
 	@test_volume=$$(docker volume create); \
 	  trap 'docker volume rm "$$test_volume" >/dev/null' EXIT; \
-	  docker run --rm -v "$$test_volume:/home/dev" skytools-runtime ensure --only uv,go,gh && \
-	  docker run --rm --network none -v "$$test_volume:/home/dev" skytools-runtime ensure --only uv,go,gh && \
+	  docker run --rm -v "$$test_volume:/home/dev" skytools-runtime ensure --only uv,go,gh,btop && \
+	  docker run --rm --network none -v "$$test_volume:/home/dev" skytools-runtime ensure --only uv,go,gh,btop && \
 	  docker run --rm --network none -v "$$test_volume:/home/dev" -v "$(CURDIR)/scripts:/checks:ro" \
-	    --entrypoint sh skytools-runtime /checks/check-status.sh --only uv,go,gh
+	    --entrypoint sh skytools-runtime /checks/check-status.sh --only uv,go,gh,btop
 
 full-integration: smoke
 	docker build --target full -t skytools-full .

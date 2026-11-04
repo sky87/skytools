@@ -10,6 +10,19 @@ skytools version
 sky-tools list
 skytools status
 skytools </dev/null
+skytools deps --only btop
+if requirements=$(skytools deps --only ocaml 2>&1); then
+  echo 'Minimal image unexpectedly includes OCaml build prerequisites' >&2
+  exit 1
+fi
+printf '%s\n' "$requirements" | grep -q 'build-essential'
+printf '%s\n' "$requirements" | grep -q 'apt-get install'
+if skytools ensure --only ocaml; then
+  echo 'Missing prerequisites did not stop installation' >&2
+  exit 1
+fi
+test ! -e "$HOME/.local/bin/opam"
+test ! -e "$HOME/.opam"
 if skytools ensure --only does-not-exist; then exit 1; fi
 if skytools status unexpected-argument; then exit 1; fi
 printf '%s\n' 'export KEEP_MY_SETTING=yes' > "$HOME/.bashrc"

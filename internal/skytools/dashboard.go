@@ -37,19 +37,23 @@ func (a dashboardAction) command() string {
 }
 
 type dashboardModel struct {
-	packages []PackageStatus
-	selected map[string]bool
-	action   dashboardAction
-	scroll   int
-	message  string
-	failed   bool
-	busy     bool
-	current  string
-	logs     []string
+	packages          []PackageStatus
+	selected          map[string]bool
+	action            dashboardAction
+	scroll            int
+	message           string
+	failed            bool
+	busy              bool
+	current           string
+	logs              []string
+	versions          map[string]dashboardPackageVersions
+	versionGeneration uint64
 }
 
 func newDashboardModel(packages []PackageStatus) *dashboardModel {
-	return &dashboardModel{packages: packages, selected: make(map[string]bool), message: "Choose packages and an action, then Run selected."}
+	d := &dashboardModel{packages: packages, selected: make(map[string]bool), message: "Choose packages and an action, then Run selected."}
+	d.resetVersions()
+	return d
 }
 
 func (d *dashboardModel) eligible(p PackageStatus) bool {
@@ -163,7 +167,17 @@ func (d *dashboardModel) frame(ui *termui.Context, width, height int, event term
 			incomplete++
 		}
 	}
-	ui.Label(1, 1, fmt.Sprintf("%d installed  %d incomplete  %d missing  |  local files only", installed, incomplete, len(d.packages)-installed-incomplete), termui.StyleMuted)
+	updates, checking := 0, 0
+	for _, p := range d.packages {
+		_, _, _, status, _ := d.versionCells(p)
+		if status == "Update available" {
+			updates++
+		}
+		if d.versions[p.Name].latestChecking {
+			checking++
+		}
+	}
+	ui.Label(1, 1, fmt.Sprintf("%d installed  %d incomplete  %d missing  |  %d updates  %d checking", installed, incomplete, len(d.packages)-installed-incomplete, updates, checking), termui.StyleMuted)
 	if height < 14 || width < 44 {
 		ui.Label(1, 3, "Enlarge terminal to at least 44 x 14.", termui.StyleError)
 		ui.Label(1, 5, "q quit | Ctrl-C cancels an operation", termui.StyleMuted)
@@ -179,6 +193,11 @@ func (d *dashboardModel) frame(ui *termui.Context, width, height int, event term
 		refresh = true
 	}
 	ui.Label(1, 4, "Action: "+d.action.label()+" | Space toggles a focused package", termui.StyleAccent)
+	if width >= 80 {
+		ui.Label(5, 5, fmt.Sprintf("%-10s %-10s %-12s %-12s %-6s %s", "Package", "State", "Installed", "Latest", "Target", "Update"), termui.StyleMuted)
+	} else {
+		ui.Label(5, 5, fmt.Sprintf("%-10s %-11s %-11s %s", "Package", "Installed", "Latest", ""), termui.StyleMuted)
+	}
 	listTop, listHeight := 6, height-14
 	if listHeight > len(d.packages) {
 		listHeight = len(d.packages)
@@ -207,14 +226,14 @@ func (d *dashboardModel) frame(ui *termui.Context, width, height int, event term
 		if name == "pi" {
 			name = "pi (+Node)"
 		}
-		label := fmt.Sprintf("%-10s %-10s %s [%s]", name, packageState(p), p.Label, p.Channel)
-		if p.Version != "" {
-			label += " | " + p.Version
-		} else if p.Path != "" {
-			label += " | " + p.Path
-		}
-		if p.Origin == "system" {
-			label += " (system)"
+		current, latest, channel, status, style := d.versionCells(p)
+		label := fmt.Sprintf("%-10s %-10s %-12s %-12s %-6s %s", name, packageState(p), versionColumn(current, 12), versionColumn(latest, 12), channel, status)
+		if width < 80 {
+			marker := ""
+			if status == "Update available" {
+				marker = "UPD"
+			}
+			label = fmt.Sprintf("%-10s %-11s %-11s %s", name, versionColumn(current, 11), versionColumn(latest, 11), marker)
 		}
 		row := listTop + i - d.scroll
 		if i < d.scroll || i >= d.scroll+listHeight {
@@ -225,13 +244,19 @@ func (d *dashboardModel) frame(ui *termui.Context, width, height int, event term
 		} else if ui.Checkbox("package-"+p.Name, 1, row, label, &value, !d.busy && d.eligible(p)) {
 			d.selected[p.Name] = value
 		}
+		if width >= 80 {
+			ui.Label(40, row, fmt.Sprintf("%-12s", versionColumn(latest, 12)), style)
+			ui.Label(60, row, status, style)
+		} else if status == "Update available" {
+			ui.Label(40, row, "UPD", style)
+		}
 	}
 	bottom := listTop + listHeight
 	ui.Label(1, bottom, fmt.Sprintf("Packages %d-%d of %d  |  %s", d.scroll+1, d.scroll+listHeight, len(d.packages), d.preview()), termui.StyleAccent)
 	detail := "Focus a package to see its local version and path."
 	for _, p := range d.packages {
 		if ui.Focused() == "package-"+p.Name {
-			detail = packageDetail(p)
+			detail = d.versionDetail(p) + " | " + packageDetail(p)
 			if detail == "" {
 				detail = p.Label + ": no local version or path available."
 			}
@@ -389,6 +414,10 @@ func (d *dashboardModel) refresh(packages []PackageStatus) {
 }
 
 func (m *manager) dashboard(version string, input *os.File, output io.Writer) (result error) {
+	return m.dashboardWithVersions(version, input, output, m.versionProbes())
+}
+
+func (m *manager) dashboardWithVersions(version string, input *os.File, output io.Writer, probes dashboardVersionProbes) (result error) {
 	packages := m.scan(m.tools())
 	file, ok := output.(*os.File)
 	if !ok || !termui.IsTerminal(input) || !termui.IsTerminal(file) {
@@ -408,18 +437,59 @@ func (m *manager) dashboard(version string, input *os.File, output io.Writer) (r
 	var ui termui.Context
 	ui.Focus("action-install")
 	var job *dashboardJob
+	var checker *dashboardVersionCheck
+	var retired []*dashboardVersionCheck
+	restartCheck := true
+	stopCheck := func() {
+		if checker != nil {
+			checker.cancel()
+			retired = append(retired, checker)
+			checker = nil
+		}
+	}
 	defer func() {
+		stopCheck()
+		for _, check := range retired {
+			check.cancel()
+			<-check.done
+		}
 		if job != nil {
 			job.cancel()
 			<-job.done
 		}
 	}()
 	refresh := func() {
+		stopCheck()
 		d.refresh(m.scan(m.tools()))
+		d.resetVersions()
+		restartCheck = true
 	}
 	event := termui.Event{}
 	quitting := false
 	for {
+		alive := retired[:0]
+		for _, check := range retired {
+			select {
+			case <-check.done:
+			default:
+				alive = append(alive, check)
+			}
+		}
+		retired = alive
+		for checker != nil {
+			select {
+			case update, ok := <-checker.results:
+				if !ok {
+					retired = append(retired, checker)
+					checker = nil
+				} else {
+					d.applyVersion(update)
+				}
+			default:
+				goto versionsDrained
+			}
+		}
+	versionsDrained:
 		if job != nil {
 			d.current, d.logs = job.log.snapshot()
 			select {
@@ -427,6 +497,8 @@ func (m *manager) dashboard(version string, input *os.File, output io.Writer) (r
 				d.current, d.logs = job.log.snapshot()
 				job = nil
 				d.complete(err, m.scan(m.tools()))
+				d.resetVersions()
+				restartCheck = true
 				if quitting {
 					return nil
 				}
@@ -473,11 +545,19 @@ func (m *manager) dashboard(version string, input *os.File, output io.Writer) (r
 			refresh()
 		}
 		if run && job == nil {
+			stopCheck()
+			restartCheck = false
 			d.busy, d.failed, d.logs = true, false, nil
 			job = startDashboardJob(m.ctx, m.dashboardRunner(d.action, d.names()))
 		}
 		if err := terminal.Present(ui.EndFrame()); err != nil {
 			return err
+		}
+		// The first local screen is presented before any upstream request or
+		// executable version query is started.
+		if restartCheck && job == nil {
+			checker = startDashboardVersions(m.ctx, d.versionGeneration, append([]PackageStatus{}, d.packages...), probes)
+			restartCheck = false
 		}
 		event, err = terminal.Poll(m.ctx, 75*time.Millisecond)
 		if err != nil {

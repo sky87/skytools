@@ -108,6 +108,51 @@ chmod +x "$HOME/.local/bin/uv"
 	}
 }
 
+func TestDashboardTerminalLoadsVersionsAfterFirstFrameAndQuitsWhileChecking(t *testing.T) {
+	m, _ := dashboardTerminalManager(t, "#!/bin/sh\nexit 99\n")
+	if err := atomicWrite(m.at(".go/current/bin/go"), []byte("#!/bin/sh\nexit 99\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWrite(m.at(".go/current/VERSION"), []byte("go1.25.0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gate := make(chan struct{})
+	probes := dashboardVersionProbes{
+		installed: func(context.Context, PackageStatus) (string, error) { return "", fmt.Errorf("no probe expected") },
+		latest: func(ctx context.Context, name string) (ReleaseInfo, error) {
+			if name == "go" {
+				select {
+				case <-gate:
+					return ReleaseInfo{Version: "1.26.2", Channel: "stable"}, nil
+				case <-ctx.Done():
+					return ReleaseInfo{}, ctx.Err()
+				}
+			}
+			return ReleaseInfo{}, fmt.Errorf("offline fixture")
+		},
+	}
+	pty := startDashboardTerminalWithProbes(t, m, probes)
+	pty.waitFor(0, "go1.25.0", time.Second)
+	pty.waitFor(0, "checking", time.Second)
+	pty.send("r")
+	pty.waitFor(0, "Local package inventory refreshed.", time.Second)
+	close(gate)
+	pty.waitFor(0, "1.26.2", time.Second)
+	pty.waitFor(0, "Update available", time.Second)
+	pty.quitAndCheckRestore()
+}
+
+func TestDashboardTerminalQuitCancelsPendingVersionChecks(t *testing.T) {
+	m, _ := dashboardTerminalManager(t, "#!/bin/sh\nexit 99\n")
+	probes := dashboardVersionProbes{installed: func(context.Context, PackageStatus) (string, error) { return "1.0.0", nil }, latest: func(ctx context.Context, name string) (ReleaseInfo, error) {
+		<-ctx.Done()
+		return ReleaseInfo{}, ctx.Err()
+	}}
+	pty := startDashboardTerminalWithProbes(t, m, probes)
+	pty.waitFor(0, "developer packages", time.Second)
+	pty.quitAndCheckRestore()
+}
+
 func dashboardTerminalManager(t *testing.T, installer string) (*manager, *atomic.Int32) {
 	t.Helper()
 	m := testManager(t)
@@ -146,6 +191,15 @@ type dashboardTerminalPTY struct {
 }
 
 func startDashboardTerminal(t *testing.T, m *manager) *dashboardTerminalPTY {
+	return startDashboardTerminalWithProbes(t, m, dashboardVersionProbes{
+		installed: func(context.Context, PackageStatus) (string, error) { return "0.0.1", nil },
+		latest: func(context.Context, string) (ReleaseInfo, error) {
+			return ReleaseInfo{}, fmt.Errorf("fixture offline")
+		},
+	})
+}
+
+func startDashboardTerminalWithProbes(t *testing.T, m *manager, probes dashboardVersionProbes) *dashboardTerminalPTY {
 	t.Helper()
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
 	if err != nil {
@@ -177,7 +231,7 @@ func startDashboardTerminal(t *testing.T, m *manager) *dashboardTerminalPTY {
 	}
 	p.resize(120, 32)
 	m.ctx, p.cancel = context.WithTimeout(context.Background(), 10*time.Second)
-	go func() { p.done <- m.dashboard("pty-test", slave, slave) }()
+	go func() { p.done <- m.dashboardWithVersions("pty-test", slave, slave, probes) }()
 	t.Cleanup(func() {
 		p.cancel()
 		// A failing test must not strand the fixture's sleeping child, even if

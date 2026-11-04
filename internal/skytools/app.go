@@ -22,13 +22,14 @@ Commands:
   ensure   Install missing tools and configure your shell; keep existing versions
   update   Ensure tools exist, then update them
   status   Show a fast, read-only local package inventory
+  deps     Check system prerequisites and show missing Debian packages
   ui       Open the interactive package dashboard
   list     List tool names accepted by --only
   env      Print shell environment; use: eval "$(skytools env)"
   setup    Configure shell startup files without installing tools
   version  Show the skytools version
 
-Options for ensure, update, status:
+Options for ensure, update, status, deps:
   --only   Comma-separated tool names; default: all (pi also requires node)
 
 Options for status:
@@ -54,7 +55,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, version stri
 		return 0
 	}
 	switch command {
-	case "ensure", "update", "status", "list", "env", "setup", "ui":
+	case "ensure", "update", "status", "list", "env", "setup", "ui", "deps":
 	default:
 		fmt.Fprint(errOut, usage)
 		return 2
@@ -63,7 +64,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, version stri
 	flags.SetOutput(errOut)
 	only := ""
 	versions := false
-	if command == "ensure" || command == "update" || command == "status" {
+	if command == "ensure" || command == "update" || command == "status" || command == "deps" {
 		flags.StringVar(&only, "only", "", "comma-separated tool names")
 	}
 	if command == "status" {
@@ -100,6 +101,22 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, version stri
 		}
 		return 0
 	}
+	if command == "deps" {
+		report, err := m.checkSystemDependencies("update", selected)
+		if err != nil {
+			fmt.Fprintln(errOut, "skytools:", err)
+			return 1
+		}
+		if len(report.Missing) == 0 {
+			fmt.Fprintln(out, "All required system packages are installed.")
+			return 0
+		}
+		for _, dep := range report.Missing {
+			fmt.Fprintf(out, "%s: %s (needed by %s)\n", dep.Capability, strings.Join(dep.Packages, ", "), strings.Join(dep.RequiredBy, ", "))
+		}
+		fmt.Fprintln(out, report.InstallCommand)
+		return 1
+	}
 	if command == "status" {
 		if versions {
 			m.status(selected)
@@ -133,6 +150,9 @@ func (m *manager) perform(command string, selected []tool, started func(string))
 			return err
 		}
 		if command != "setup" {
+			if err := m.preflight(command, selected); err != nil {
+				return err
+			}
 			for _, packageTool := range selected {
 				if err := m.ctx.Err(); err != nil {
 					return err

@@ -14,11 +14,12 @@ import (
 )
 
 type manager struct {
-	ctx         context.Context
-	home        string
-	env         []string
-	out, errOut io.Writer
-	client      *http.Client
+	ctx            context.Context
+	home           string
+	env            []string
+	out, errOut    io.Writer
+	client         *http.Client
+	systemProvider SystemPackageProvider
 }
 
 func newManager(ctx context.Context, out, errOut io.Writer) (*manager, error) {

@@ -23,7 +23,7 @@ COPY --from=build /out/skytools /skytools
 # Minimal execution image: no Go, Node, Rust, Java, or developer toolchains.
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash ca-certificates curl git unzip xz-utils libicu72 libssl3 libstdc++6 \
+    bash ca-certificates curl git unzip xz-utils libicu72 libssl3 libstdc++6 tzdata \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 dev
 COPY --from=build /out/skytools /usr/local/bin/skytools
