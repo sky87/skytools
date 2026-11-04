@@ -103,6 +103,10 @@ Configuration inherited from the old manager:
   Docker provides isolation and unprivileged namespaces are unavailable. Unlike
   the old container-only script, ordinary target machines retain opam sandboxing.
 
+Lean's default points to a concrete installed stable version so it works offline.
+`update` explicitly resolves the stable channel and selects the newest installed
+stable Lean version; `ensure` uses the newest stable version already installed.
+
 State and locking live in `~/.local/state/skytools`. Run as the target user so
 tools are installed into that user's home.
 

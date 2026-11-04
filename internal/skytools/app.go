@@ -186,15 +186,9 @@ func (m *manager) status(tools []tool) {
 			cancel()
 			if err == nil && v.label == "lean" {
 				// The Lean proxy can download a tracking toolchain as a side effect.
-				// Report the locally registered default instead of starting that proxy.
-				registered := "not installed / unavailable"
-				for _, line := range strings.Split(output, "\n") {
-					if strings.HasSuffix(strings.TrimSpace(line), " (default)") {
-						registered = strings.TrimSpace(line)
-						break
-					}
-				}
-				output = registered
+				// Report the newest locally registered stable version. Current elan
+				// lists names without the default markers used by older releases.
+				output, err = latestLeanToolchain(output)
 			}
 			if err != nil {
 				if errors.Is(ctx.Err(), context.DeadlineExceeded) {

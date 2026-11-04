@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -160,7 +159,7 @@ func (m *manager) installOpam() error {
 	return cmd.Run()
 }
 
-func latestCompiler(output string) (string, error) {
+func latestStableVersion(output string) (string, error) {
 	best := ""
 	var bestParts [3]int
 	for _, value := range strings.Fields(output) {
@@ -171,7 +170,7 @@ func latestCompiler(output string) (string, error) {
 		for i, number := range strings.Split(value, ".") {
 			parsed, err := strconv.Atoi(number)
 			if err != nil {
-				return "", fmt.Errorf("invalid OCaml version %q", value)
+				return "", fmt.Errorf("invalid version %q", value)
 			}
 			parts[i] = parsed
 		}
@@ -187,9 +186,32 @@ func latestCompiler(output string) (string, error) {
 		}
 	}
 	if best == "" {
-		return "", fmt.Errorf("no stable OCaml compiler is available")
+		return "", fmt.Errorf("no stable version is available")
 	}
-	return "ocaml-base-compiler." + best, nil
+	return best, nil
+}
+
+func latestCompiler(output string) (string, error) {
+	version, err := latestStableVersion(output)
+	if err != nil {
+		return "", err
+	}
+	return "ocaml-base-compiler." + version, nil
+}
+
+func latestLeanToolchain(output string) (string, error) {
+	var versions []string
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && strings.HasPrefix(fields[0], "leanprover/lean4:v") {
+			versions = append(versions, strings.TrimPrefix(fields[0], "leanprover/lean4:v"))
+		}
+	}
+	version, err := latestStableVersion(strings.Join(versions, " "))
+	if err != nil {
+		return "", err
+	}
+	return "leanprover/lean4:v" + version, nil
 }
 
 func (m *manager) compiler() (string, error) {
@@ -272,13 +294,28 @@ func (m *manager) ensureLean() error {
 	if err != nil {
 		return fmt.Errorf("list elan toolchains: %w: %s", err, output)
 	}
-	if !regexp.MustCompile(`(?m) \(default\)$`).MatchString(output) {
+	toolchain, err := latestLeanToolchain(output)
+	if err != nil {
 		if err := m.run(m.at(".elan/bin/elan"), "toolchain", "install", "leanprover/lean4:stable"); err != nil {
 			return err
 		}
-		return m.run(m.at(".elan/bin/elan"), "default", "leanprover/lean4:stable")
+		return m.pinLeanDefault()
 	}
-	return nil
+	// A concrete default avoids network resolution of the stable alias on every
+	// proxy invocation. Only update explicitly resolves and downloads stable again.
+	return m.run(m.at(".elan/bin/elan"), "default", toolchain)
+}
+
+func (m *manager) pinLeanDefault() error {
+	output, err := m.output(m.at(".elan/bin/elan"), "toolchain", "list")
+	if err != nil {
+		return fmt.Errorf("list installed Lean toolchains: %w: %s", err, output)
+	}
+	toolchain, err := latestLeanToolchain(output)
+	if err != nil {
+		return fmt.Errorf("Lean installer did not register a stable toolchain: %w", err)
+	}
+	return m.run(m.at(".elan/bin/elan"), "default", toolchain)
 }
 
 func (m *manager) updateLean() error {
@@ -288,7 +325,7 @@ func (m *manager) updateLean() error {
 	if err := m.run(m.at(".elan/bin/elan"), "toolchain", "install", "leanprover/lean4:stable"); err != nil {
 		return err
 	}
-	return m.run(m.at(".elan/bin/elan"), "default", "leanprover/lean4:stable")
+	return m.pinLeanDefault()
 }
 
 func (m *manager) ensurePi() error {

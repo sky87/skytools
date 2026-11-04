@@ -23,7 +23,7 @@ func (m *manager) download(url string, dst io.Writer) error {
 	}
 	req.Header.Set("User-Agent", "skytools")
 	var resp *http.Response
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 6; attempt++ {
 		resp, err = m.client.Do(req)
 		if err == nil && resp.StatusCode == http.StatusOK {
 			break
@@ -34,13 +34,13 @@ func (m *manager) download(url string, dst io.Writer) error {
 			retry = resp.StatusCode == 429 || resp.StatusCode >= 500
 			resp.Body.Close()
 		}
-		if !retry || attempt == 2 {
+		if !retry || attempt == 5 {
 			return err
 		}
 		select {
 		case <-m.ctx.Done():
 			return m.ctx.Err()
-		case <-time.After(time.Duration(attempt+1) * time.Second):
+		case <-time.After(time.Second << attempt):
 		}
 	}
 	defer resp.Body.Close()

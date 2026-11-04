@@ -181,7 +181,7 @@ func TestLeanStatusDoesNotStartDownloadingProxy(t *testing.T) {
 	if _, err := os.Stat(m.at("proxy-started")); !os.IsNotExist(err) {
 		t.Fatal("status started Lean proxy")
 	}
-	if !strings.Contains(output.String(), "leanprover/lean4:v4.0.0 (default)") {
+	if !strings.Contains(output.String(), "leanprover/lean4:v4.0.0") {
 		t.Fatalf("status: %s", output.String())
 	}
 }
@@ -192,9 +192,9 @@ func TestLeanEnsureInstallsToolchainBeforeSettingDefault(t *testing.T) {
 printf '%s %s\n' "$1" "${2:-}" >> "$HOME/elan-calls"
 case "$1 ${2:-}" in
   'toolchain list')
-    if [ -f "$HOME/lean-installed" ]; then echo 'leanprover/lean4:v4.0.0 (default)'; fi ;;
+    if [ -f "$HOME/lean-installed" ]; then echo 'leanprover/lean4:v4.0.0'; fi ;;
   'toolchain install') touch "$HOME/lean-installed" ;;
-  'default leanprover/lean4:stable') test -f "$HOME/lean-installed" ;;
+  'default leanprover/lean4:v4.0.0') test -f "$HOME/lean-installed" ;;
   *) exit 1 ;;
 esac
 `
@@ -211,7 +211,7 @@ esac
 	if strings.Count(string(calls), "toolchain install") != 1 {
 		t.Fatalf("toolchain was not installed exactly once: %s", calls)
 	}
-	if !strings.Contains(string(calls), "default leanprover/lean4:stable") {
+	if !strings.Contains(string(calls), "default leanprover/lean4:v4.0.0") {
 		t.Fatalf("default not configured: %s", calls)
 	}
 }
@@ -387,5 +387,26 @@ func TestChecksumsMatchExactAsset(t *testing.T) {
 	}
 	if _, err := checksumFor([]byte(hash+"  gh_other.tar.gz\n"), "gh_correct.tar.gz"); err == nil {
 		t.Fatal("accepted wrong asset checksum")
+	}
+}
+
+func TestDownloadRetriesTransientServerFailure(t *testing.T) {
+	m := testManager(t)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		requests++
+		if requests == 1 {
+			http.Error(w, "temporary failure", http.StatusBadGateway)
+			return
+		}
+		fmt.Fprint(w, "verified payload")
+	}))
+	defer server.Close()
+	var data bytes.Buffer
+	if err := m.download(server.URL, &data); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 || data.String() != "verified payload" {
+		t.Fatalf("requests=%d, payload=%q", requests, data.String())
 	}
 }
