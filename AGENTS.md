@@ -27,6 +27,10 @@ Explain OS prerequisites in README.md. Avoid overwriting user dotfiles and keep
 shell configuration idempotent. Verify upstream SHA-256 checksums where available;
 stage archive installs before changing active pointers. Keep Linux amd64/arm64
 working; cross-compile macOS amd64/arm64 without running anything on this host.
+`self-update` updates only the running skytools executable from the latest stable
+GitHub release. Verify the matching asset's SHA-256 and reported version before an
+atomic replacement, preserve symlinks and permissions, and retain the old binary
+on failure or cancellation. Never escalate privileges for image-owned executables.
 
 Running without a command opens the dashboard when stdin and stdout are terminals;
 otherwise print a read-only inventory. Keep package detection fast and offline:

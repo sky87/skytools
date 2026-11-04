@@ -47,6 +47,7 @@ not currently supported.
 skytools                         # open the interactive package dashboard
 skytools ensure                  # install missing tools; leave installed versions alone
 skytools update                  # ensure tools exist, then explicitly update them
+skytools self-update             # update skytools itself from GitHub's latest release
 skytools status                  # fast local installed/missing/incomplete inventory
 skytools status --versions       # explicitly run version commands
 skytools deps --only rust,btop   # check system packages without installing anything
@@ -85,6 +86,14 @@ Update installs a managed copy under your home directory.
 
 `ensure` and `update` serialize changes with a per-home lock. A failed tool
 installation stops the command with an error; rerun it after fixing the cause.
+`self-update` selects the latest stable release of `sky87/skytools`, downloads the
+binary for the running OS/architecture, and verifies its published SHA-256 checksum.
+It validates the candidate's version before replacing the executable atomically;
+failed downloads or checks leave the current binary intact. Symlinks remain intact,
+permissions are preserved, and equal/newer versions are kept. The next invocation
+uses the new binary. The executable's directory must be writable. For an image-owned
+`/usr/local/bin/skytools`, rebuild the container image or use a user-owned copy.
+This command changes only skytools; it does not update managed tools or shell files.
 Release archives for Go, Corretto, GitHub CLI, and btop are checked against upstream
 SHA-256 checksums, extracted in staging directories, and activated after validation.
 Other tools use their upstream installers or package managers over HTTPS.

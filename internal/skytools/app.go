@@ -19,15 +19,16 @@ Without a command, open the interactive package dashboard on a terminal,
 or print a fast, read-only package inventory when output is redirected.
 
 Commands:
-  ensure   Install missing tools and configure your shell; keep existing versions
-  update   Ensure tools exist, then update them
-  status   Show a fast, read-only local package inventory
-  deps     Check system prerequisites and show missing Debian packages
-  ui       Open the interactive package dashboard
-  list     List tool names accepted by --only
-  env      Print shell environment; use: eval "$(skytools env)"
-  setup    Configure shell startup files without installing tools
-  version  Show the skytools version
+  ensure       Install missing tools and configure your shell; keep existing versions
+  update       Ensure tools exist, then update them
+  status       Show a fast, read-only local package inventory
+  deps         Check system prerequisites and show missing Debian packages
+  ui           Open the interactive package dashboard
+  list         List tool names accepted by --only
+  env          Print shell environment; use: eval "$(skytools env)"
+  setup        Configure shell startup files without installing tools
+  self-update  Update skytools itself from the latest stable GitHub release
+  version      Show the skytools version
 
 Options for ensure, update, status, deps:
   --only   Comma-separated tool names; default: all (pi also requires node)
@@ -55,7 +56,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, version stri
 		return 0
 	}
 	switch command {
-	case "ensure", "update", "status", "list", "env", "setup", "ui", "deps":
+	case "ensure", "update", "status", "list", "env", "setup", "ui", "deps", "self-update":
 	default:
 		fmt.Fprint(errOut, usage)
 		return 2
@@ -88,6 +89,17 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, version stri
 	if err != nil {
 		fmt.Fprintln(errOut, "skytools:", err)
 		return 1
+	}
+	if command == "self-update" {
+		path, err := os.Executable()
+		if err == nil {
+			err = m.selfUpdate(version, path)
+		}
+		if err != nil {
+			fmt.Fprintln(errOut, "skytools:", err)
+			return 1
+		}
+		return 0
 	}
 	tools := m.tools()
 	selected, err := selectTools(tools, only, command != "status")

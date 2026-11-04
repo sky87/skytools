@@ -42,6 +42,7 @@ func TestCLIValidationAndReadOnlyCommands(t *testing.T) {
 		{[]string{"unknown"}, 2}, {[]string{"ensure", "--only", "no-such-tool"}, 2},
 		{[]string{"ensure|update"}, 2},
 		{[]string{"status", "extra"}, 2}, {[]string{"env", "extra"}, 2},
+		{[]string{"self-update", "extra"}, 2}, {[]string{"self-update", "--only", "go"}, 2}, {[]string{"self-update", "--help"}, 0},
 		{[]string{"list"}, 0}, {[]string{"env"}, 0}, {[]string{"status", "--only", "go,gh"}, 0},
 	} {
 		if code := Run(context.Background(), tc.args, io.Discard, io.Discard, "test"); code != tc.code {
