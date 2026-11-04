@@ -13,12 +13,16 @@ import (
 	"time"
 )
 
-const usage = `usage: skytools <command> [--only tool,tool]
+const usage = `usage: skytools [command] [--only tool,tool]
+
+Without a command, open the interactive package dashboard on a terminal,
+or print a fast, read-only package inventory when output is redirected.
 
 Commands:
   ensure   Install missing tools and configure your shell; keep existing versions
   update   Ensure tools exist, then update them
-  status   Show versions of managed tools (does not install anything)
+  status   Show a fast, read-only local package inventory
+  ui       Open the interactive package dashboard
   list     List tool names accepted by --only
   env      Print shell environment; use: eval "$(skytools env)"
   setup    Configure shell startup files without installing tools
@@ -27,13 +31,15 @@ Commands:
 Options for ensure, update, status:
   --only   Comma-separated tool names; default: all (pi also requires node)
 
+Options for status:
+  --versions  Run managed tools to query their versions (may be slow)
+
 Installations live under $HOME. No sudo or system package changes.
 `
 
 func Run(ctx context.Context, args []string, out, errOut io.Writer, version string) int {
 	if len(args) == 0 {
-		fmt.Fprint(errOut, usage)
-		return 2
+		args = []string{"ui"}
 	}
 	command := args[0]
 	if command == "--help" || command == "-h" || command == "help" {
@@ -48,7 +54,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, version stri
 		return 0
 	}
 	switch command {
-	case "ensure", "update", "status", "list", "env", "setup":
+	case "ensure", "update", "status", "list", "env", "setup", "ui":
 	default:
 		fmt.Fprint(errOut, usage)
 		return 2
@@ -56,8 +62,12 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, version stri
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	flags.SetOutput(errOut)
 	only := ""
+	versions := false
 	if command == "ensure" || command == "update" || command == "status" {
 		flags.StringVar(&only, "only", "", "comma-separated tool names")
+	}
+	if command == "status" {
+		flags.BoolVar(&versions, "versions", false, "run managed tools to query versions")
 	}
 	if err := flags.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -91,29 +101,74 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, version stri
 		return 0
 	}
 	if command == "status" {
-		m.status(selected)
+		if versions {
+			m.status(selected)
+		} else {
+			printInventory(out, m.scan(selected))
+		}
 		return 0
 	}
-	if err := m.platform(); err != nil {
+	if command == "ui" {
+		if err := m.dashboard(version, os.Stdin, out); err != nil {
+			fmt.Fprintln(errOut, "skytools:", err)
+			return 1
+		}
+		return 0
+	}
+	if err := m.perform(command, selected, nil); err != nil {
 		fmt.Fprintln(errOut, "skytools:", err)
 		return 1
 	}
-	err = m.withLock(func() error {
+	return 0
+}
+
+// perform is shared by command-line and dashboard operations. Callers expand
+// dependencies with selectTools before entering this function.
+func (m *manager) perform(command string, selected []tool, started func(string)) error {
+	if err := m.platform(); err != nil {
+		return err
+	}
+	return m.withLock(func() error {
+		if err := m.ctx.Err(); err != nil {
+			return err
+		}
 		if command != "setup" {
-			for _, tool := range selected {
-				start := time.Now()
-				m.log("checking %s", tool.label)
-				if err := tool.ensure(); err != nil {
-					return fmt.Errorf("%s: %w", tool.name, err)
+			for _, packageTool := range selected {
+				if err := m.ctx.Err(); err != nil {
+					return err
 				}
-				if command == "update" && tool.update != nil {
-					m.log("updating %s", tool.label)
-					if err := tool.update(); err != nil {
-						return fmt.Errorf("%s: %w", tool.name, err)
+				if started != nil {
+					started(packageTool.label)
+				}
+				start := time.Now()
+				m.log("checking %s", packageTool.label)
+				before := m.scan([]tool{packageTool})
+				if command == "update" || !before[0].Installed {
+					if err := packageTool.ensure(); err != nil {
+						return fmt.Errorf("%s: %w", packageTool.name, err)
 					}
 				}
-				m.log("%s is available (%s)", tool.label, time.Since(start).Round(time.Second))
+				if command == "update" && packageTool.update != nil {
+					m.log("updating %s", packageTool.label)
+					if err := packageTool.update(); err != nil {
+						return fmt.Errorf("%s: %w", packageTool.name, err)
+					}
+				}
+				if err := m.ctx.Err(); err != nil {
+					return err
+				}
+				after := m.scan([]tool{packageTool})[0]
+				if !after.Installed || (command == "update" || !before[0].Installed) && after.Origin != "managed" {
+					return fmt.Errorf("%s: installation is still missing or incomplete", packageTool.name)
+				}
+				m.log("%s is available (%s)", packageTool.label, time.Since(start).Round(time.Second))
 			}
+		}
+		if err := m.ctx.Err(); err != nil {
+			return err
+		}
+		if started != nil {
+			started("shell configuration")
 		}
 		if err := m.setupShell(); err != nil {
 			return err
@@ -121,11 +176,6 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, version stri
 		m.log("shell configured; open a new shell or run: eval \"$(skytools env)\"")
 		return nil
 	})
-	if err != nil {
-		fmt.Fprintln(errOut, "skytools:", err)
-		return 1
-	}
-	return 0
 }
 
 type tool struct {

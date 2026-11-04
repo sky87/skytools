@@ -32,7 +32,7 @@ USER dev
 ENV HOME=/home/dev
 WORKDIR /home/dev
 ENTRYPOINT ["skytools"]
-CMD ["--help"]
+CMD []
 
 # OCaml builds its compiler from source. Keep its native prerequisites out of
 # the minimal runtime, and opt into Docker as opam's isolation boundary.

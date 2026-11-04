@@ -33,8 +33,8 @@ func newManager(ctx context.Context, out, errOut io.Writer) (*manager, error) {
 	m.env = append([]string{}, os.Environ()...)
 	for key, value := range map[string]string{
 		"HOME": m.home, "NVM_DIR": m.at(".nvm"), "RUSTUP_HOME": m.at(".rustup"),
-		"CARGO_HOME": m.at(".cargo"), "BUN_INSTALL": m.at(".bun"), "DOTNET_ROOT": m.at(".dotnet"),
-		"GOROOT": m.at(".go/current"), "GOPATH": m.at("go"), "JAVA_HOME": m.at(".jdk/current"),
+		"CARGO_HOME": m.at(".cargo"), "BUN_INSTALL": m.at(".bun"),
+		"GOPATH":   m.at("go"),
 		"FZF_HOME": m.at(".fzf"), "OPAMROOT": m.at(".opam"), "ELAN_HOME": m.at(".elan"),
 		"PNPM_HOME": m.at(".local/share/pnpm"), "UV_INSTALL_DIR": m.at(".local/bin"),
 		"UV_NO_MODIFY_PATH": "1", "DOTNET_CLI_TELEMETRY_OPTOUT": "1", "PROFILE": "/dev/null",
@@ -48,6 +48,22 @@ func newManager(ctx context.Context, out, errOut io.Writer) (*manager, error) {
 	}
 	m.env = setEnv(m.env, "PATH", strings.Join(paths, string(os.PathListSeparator))+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return m, nil
+}
+
+// Keep system runtime configuration usable until a managed copy exists. Check
+// at command time as well: this manager may have just installed that copy.
+func (m *manager) commandEnvironment() []string {
+	env := m.env
+	for _, root := range []struct{ key, directory, binary string }{
+		{"GOROOT", ".go/current", "bin/go"},
+		{"JAVA_HOME", ".jdk/current", "bin/java"},
+		{"DOTNET_ROOT", ".dotnet", "dotnet"},
+	} {
+		if executable(m.at(root.directory, root.binary)) {
+			env = setEnv(env, root.key, m.at(root.directory))
+		}
+	}
+	return env
 }
 
 func setEnv(env []string, key, value string) []string {
@@ -88,7 +104,7 @@ func (m *manager) command(ctx context.Context, args ...string) (*exec.Cmd, error
 		return nil, err
 	}
 	cmd := exec.CommandContext(ctx, name, args[1:]...)
-	cmd.Env, cmd.Dir = m.env, m.home
+	cmd.Env, cmd.Dir = m.commandEnvironment(), m.home
 	// Kill the entire process group on cancellation, including installer children.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }

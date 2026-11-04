@@ -31,7 +31,7 @@ gh release download --repo sky87/skytools \
 grep '  skytools_linux_arm64$' SHA256SUMS | sha256sum --check -
 mkdir -p "$HOME/.local/bin"
 install -m 0755 skytools_linux_arm64 "$HOME/.local/bin/skytools"
-"$HOME/.local/bin/skytools" ensure
+"$HOME/.local/bin/skytools"
 eval "$("$HOME/.local/bin/skytools" env)"
 ```
 
@@ -43,15 +43,37 @@ Alpine/musl tool installations are not currently supported.
 ## Commands
 
 ```sh
+skytools                         # open the interactive package dashboard
 skytools ensure                  # install missing tools; leave installed versions alone
 skytools update                  # ensure tools exist, then explicitly update them
-skytools status                  # report installed versions
+skytools status                  # fast local installed/missing/incomplete inventory
+skytools status --versions       # explicitly run version commands
 skytools list                    # show names accepted by --only
 skytools ensure --only uv,go,gh   # install a subset
 skytools ensure --only pi        # also ensures Node.js and pnpm
 skytools setup                   # configure the shell without installing tools
 eval "$(skytools env)"           # activate the environment in the current shell
 ```
+
+The dashboard shows installed, missing, and incomplete packages. Select an
+Install or Update action, choose packages, then run the selection. Installation
+output stays visible while the keyboard remains responsive, and cancelling an
+operation returns to the dashboard. Without an interactive terminal, running
+`skytools` prints the local inventory and exits without changing anything.
+
+Use the arrow keys, Tab, or Shift-Tab to move focus. Space or Enter toggles an
+eligible package; installed rows remain focusable to inspect their version and
+path. `i` selects Install missing, `u` selects Update, `a` selects or clears all
+eligible packages, and `r` refreshes local inventory. Focus Run selected and
+press Enter to start. Ctrl-C cancels a running action and returns to the
+dashboard, or quits when idle. `q` quits after cancelling any active action.
+
+Inventory detection reads executable paths, symlinks, and upstream toolchain
+metadata. It runs no version commands, makes no network requests, and keeps no
+skytools installation manifest. Versions are shown when available from native
+files; `status --versions` provides explicit executable version queries.
+Complete system/PATH installations are recognized too. `ensure` keeps them;
+Update installs a managed copy under your home directory.
 
 `ensure` and `update` serialize changes with a per-home lock. A failed tool
 installation stops the command with an error; rerun it after fixing the cause.
@@ -80,10 +102,10 @@ old name. When downloading the binary yourself, an optional equivalent is
 | `bun` | Bun | `~/.bun` |
 | `dotnet` | .NET LTS SDK | `~/.dotnet` |
 | `go` | latest stable Go | `~/.go/releases`, `~/.go/current`; workspace `~/go` |
-| `jdk` | Amazon Corretto 25 | `~/.jdk/releases`, `~/.jdk/current` |
+| `jdk` | Amazon Corretto, latest Java LTS | `~/.jdk/releases`, `~/.jdk/current` |
 | `fzf` | fzf | `~/.fzf` |
 | `gh` | GitHub CLI | `~/.local/bin/gh` |
-| `ocaml` | opam, latest stable OCaml compiler | `~/.local/bin/opam`, `~/.opam` |
+| `ocaml` | opam, latest OCaml LTS compiler | `~/.local/bin/opam`, `~/.opam` |
 | `lean` | elan, Lean 4 stable | `~/.elan` |
 | `claude` | Claude Code | `~/.local/bin/claude` |
 | `codex` | Codex | `~/.local/bin/codex` |
@@ -95,19 +117,46 @@ system packages from the old devcontainer (editors, C/C++ compilers, LaTeX,
 document tools, native libraries) remain OS prerequisites rather than managed
 home installations. skytools never invokes `sudo` or a system package manager.
 
-Configuration inherited from the old manager:
+## Release selection
 
-- `SKY_TOOLS_NVM_VERSION`: nvm installer version (default `v0.40.1`).
-- `SKY_TOOLS_CORRETTO_VERSION`: Corretto major version (default `25`).
-- `SKY_TOOLS_DISABLE_OPAM_SANDBOX=1`: explicitly disable opam sandboxing when
-  Docker provides isolation and unprivileged namespaces are unavailable. Unlike
-  the old container-only script, ordinary target machines retain opam sandboxing.
+Install and Update resolve the current upstream release when needed. No nvm
+version or Java major is fixed in the application. The old
+`SKY_TOOLS_NVM_VERSION` and `SKY_TOOLS_CORRETTO_VERSION` pins are no longer used.
+
+| Package | Selection policy |
+| --- | --- |
+| Node.js | Latest LTS via nvm's upstream LTS channel |
+| .NET | Latest LTS SDK via the official installer's LTS channel |
+| Java | Latest LTS identified by official Adoptium release metadata, then the corresponding checksummed Amazon Corretto archive |
+| OCaml | Latest release advertised as LTS by the official OCaml release metadata |
+| nvm and fzf | Latest published stable GitHub release |
+| Other tools | Latest upstream stable release/channel; these tools have no separate LTS selection |
+
+The [Adoptium available-releases API](https://api.adoptium.net/v3/info/available_releases)
+provides Java's current LTS major. The installed JDK remains Amazon Corretto;
+installation fails clearly if Corretto does not yet publish that LTS archive.
+Upstream native metadata, rather than skytools marker files, identifies the
+installed JDK. Claude Code uses its documented
+[stable channel](https://code.claude.com/docs/en/setup).
+
+OCaml's LTS classification comes from the same
+[official release metadata](https://github.com/ocaml/ocaml.org/tree/main/data/releases)
+used by ocaml.org, following its
+[compiler release cycle](https://ocaml.org/tools/compiler-release-cycle).
+
+An LTS line can be older than the newest feature release. For example, selecting
+Update for an OCaml installation on a newer feature line switches it to the
+advertised LTS line. `ensure` leaves complete existing installations alone.
+
+Set `SKY_TOOLS_DISABLE_OPAM_SANDBOX=1` to explicitly disable opam sandboxing when
+Docker provides isolation and unprivileged namespaces are unavailable. Ordinary
+target machines retain opam sandboxing.
 
 Lean's default points to a concrete installed stable version so it works offline.
 `update` explicitly resolves the stable channel and selects the newest installed
 stable Lean version; `ensure` uses the newest stable version already installed.
 
-State and locking live in `~/.local/state/skytools`. Run as the target user so
+The operation lock lives in `~/.local/state/skytools`. Run as the target user so
 tools are installed into that user's home.
 
 ## Target prerequisites
@@ -143,7 +192,11 @@ make release VERSION=v0.1.0  # four executables + SHA256SUMS in dist/
 Integration tests use disposable Docker volumes, never your real home. Test
 fixtures run against local HTTP servers; they cover checksum failures, unsafe
 archives, preserving the active Go release after failure, shell setup, command
-validation, and lock contention. `GOPROXY=off` and `GOSUMDB=off` are set in the
+validation, and lock contention. Terminal tests use Linux pseudo-terminals for
+raw input, resize, cancellation, rendering, and restoration. Dashboard tests
+also exercise actual keyboard-driven installation and cancellation using local
+installer fixtures. Inventory benchmarks and sentinel executables check that
+detection stays filesystem-only. `GOPROXY=off` and `GOSUMDB=off` are set in the
 Go container. CI runs the minimal-container checks and real subset installation
 on Linux amd64 and arm64.
 

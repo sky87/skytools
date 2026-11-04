@@ -38,7 +38,7 @@ func TestCLIValidationAndReadOnlyCommands(t *testing.T) {
 		args []string
 		code int
 	}{
-		{nil, 2}, {[]string{"--help"}, 0}, {[]string{"version"}, 0},
+		{nil, 0}, {[]string{"--help"}, 0}, {[]string{"version"}, 0},
 		{[]string{"unknown"}, 2}, {[]string{"ensure", "--only", "no-such-tool"}, 2},
 		{[]string{"ensure|update"}, 2},
 		{[]string{"status", "extra"}, 2}, {[]string{"env", "extra"}, 2},
@@ -82,6 +82,9 @@ func TestSelectionPreservesOrderAndAddsNodeForPi(t *testing.T) {
 func TestShellSetupPreservesFilesAndIsIdempotent(t *testing.T) {
 	m := testManager(t)
 	original := []byte("export USER_SETTING=preserved")
+	if err := atomicWrite(m.at(".go/current/bin/go"), []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	name := m.at(".bash_profile")
 	if err := os.WriteFile(name, original, 0600); err != nil {
 		t.Fatal(err)
@@ -312,7 +315,11 @@ func TestArchiveRejectsTraversalAndLinkEscapes(t *testing.T) {
 func TestGoInstallUsesChecksumAndKeepsExistingReleaseOnFailure(t *testing.T) {
 	m := testManager(t)
 	contents := "#!/bin/sh\necho go version go1.26.0\n"
-	archive := tarData(t, []*tar.Header{{Name: "go/bin/go", Mode: 0755, Typeflag: tar.TypeReg, Size: int64(len(contents))}}, []string{contents})
+	nativeVersion := "go1.26.0\n"
+	archive := tarData(t, []*tar.Header{
+		{Name: "go/bin/go", Mode: 0755, Typeflag: tar.TypeReg, Size: int64(len(contents))},
+		{Name: "go/VERSION", Mode: 0644, Typeflag: tar.TypeReg, Size: int64(len(nativeVersion))},
+	}, []string{contents, nativeVersion})
 	hash := sha256.Sum256(archive)
 	checksum := hex.EncodeToString(hash[:])
 	version := "go1.26.0"

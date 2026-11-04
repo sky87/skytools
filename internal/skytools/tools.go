@@ -31,43 +31,78 @@ func (m *manager) tools() []tool {
 		}
 	}
 	dotnet := install("https://dot.net/v1/dotnet-install.sh", "bash", "--install-dir", m.at(".dotnet"), "--channel", "LTS", "--no-path")
-	codex := install("https://chatgpt.com/codex/install.sh", "sh")
+	codex := install("https://chatgpt.com/codex/install.sh", "sh", "--release", "latest")
+	claude := install("https://claude.ai/install.sh", "bash", "stable")
 	opencode := install("https://opencode.ai/install", "bash", "--no-modify-path")
 	return []tool{
 		{"uv", "uv (Python manager)", missing(".local/bin/uv", install("https://astral.sh/uv/install.sh", "sh")), command(m.at(".local/bin/uv"), "self", "update"), []versionCommand{version("uv", ".local/bin/uv", "--version")}},
-		{"rust", "Rust / rustup", missing(".cargo/bin/rustup", install("https://sh.rustup.rs", "sh", "-y", "--no-modify-path")), command(m.at(".cargo/bin/rustup"), "update"), []versionCommand{version("rust", ".cargo/bin/rustc", "--version"), version("rustup", ".cargo/bin/rustup", "--version")}},
-		{"node", "nvm / Node.js LTS / pnpm", m.ensureNode, func() error { return m.node(true) }, []versionCommand{
+		{"rust", "Rust / rustup", m.ensureRust, m.updateRust, []versionCommand{version("rust", ".cargo/bin/rustc", "--version"), version("rustup", ".cargo/bin/rustup", "--version")}},
+		{"node", "nvm / Node.js LTS / pnpm", m.ensureNode, m.updateNode, []versionCommand{
 			{"nvm", []string{"bash", "-c", `. "$NVM_DIR/nvm.sh"; nvm --version`}},
 			version("node", ".local/bin/node", "--version"), version("npm", ".local/bin/npm", "--version"), version("pnpm", ".local/bin/pnpm", "--version"),
 		}},
 		{"bun", "Bun", missing(".bun/bin/bun", install("https://bun.sh/install", "bash")), command(m.at(".bun/bin/bun"), "upgrade"), []versionCommand{version("bun", ".bun/bin/bun", "--version")}},
-		{"dotnet", ".NET LTS", missing(".dotnet/dotnet", dotnet), dotnet, []versionCommand{version("dotnet", ".dotnet/dotnet", "--version")}},
-		{"go", "Go stable", missing(".go/current/bin/go", m.installGo), m.installGo, []versionCommand{version("go", ".go/current/bin/go", "version")}},
+		{"dotnet", ".NET LTS", func() error {
+			if m.managedStatus("dotnet").Installed {
+				return nil
+			}
+			return dotnet()
+		}, dotnet, []versionCommand{version("dotnet", ".dotnet/dotnet", "--version")}},
+		{"go", "Go stable", func() error {
+			if m.managedStatus("go").Installed {
+				return nil
+			}
+			return m.installGo()
+		}, m.installGo, []versionCommand{version("go", ".go/current/bin/go", "version")}},
 		{"jdk", "Amazon Corretto JDK", m.ensureJDK, m.installJDK, []versionCommand{version("java", ".jdk/current/bin/java", "-version"), version("javac", ".jdk/current/bin/javac", "-version")}},
 		{"fzf", "fzf", missing(".fzf/bin/fzf", m.ensureFZF), m.updateFZF, []versionCommand{version("fzf", ".fzf/bin/fzf", "--version")}},
 		{"gh", "GitHub CLI", missing(".local/bin/gh", m.installGH), m.installGH, []versionCommand{version("gh", ".local/bin/gh", "--version")}},
-		{"ocaml", "opam / OCaml", m.ensureOCaml, m.updateOCaml, []versionCommand{version("opam", ".local/bin/opam", "--version"), version("ocaml", ".local/bin/opam", "exec", "--switch=default", "--", "ocaml", "-version")}},
+		{"ocaml", "opam / OCaml LTS", m.ensureOCaml, m.updateOCaml, []versionCommand{version("opam", ".local/bin/opam", "--version"), version("ocaml", ".local/bin/opam", "exec", "--switch=default", "--", "ocaml", "-version")}},
 		{"lean", "elan / Lean 4 stable", m.ensureLean, m.updateLean, []versionCommand{version("elan", ".elan/bin/elan", "--version"), version("lean", ".elan/bin/elan", "toolchain", "list")}},
-		{"claude", "Claude Code", missing(".local/bin/claude", install("https://claude.ai/install.sh", "bash")), command(m.at(".local/bin/claude"), "update"), []versionCommand{version("claude", ".local/bin/claude", "--version")}},
+		{"claude", "Claude Code", missing(".local/bin/claude", claude), claude, []versionCommand{version("claude", ".local/bin/claude", "--version")}},
 		{"codex", "Codex", missing(".local/bin/codex", codex), codex, []versionCommand{version("codex", ".local/bin/codex", "--version")}},
 		{"opencode", "OpenCode", missing(".opencode/bin/opencode", opencode), opencode, []versionCommand{version("opencode", ".opencode/bin/opencode", "--version")}},
-		{"pi", "pi coding agent", m.ensurePi, command(m.at(".local/bin/pnpm"), "add", "--global", "--ignore-scripts", "@earendil-works/pi-coding-agent@latest"), []versionCommand{{"pi", []string{"pi", "--version"}}}},
+		{"pi", "pi coding agent", m.ensurePi, command("pnpm", "add", "--global", "--ignore-scripts", "@earendil-works/pi-coding-agent@latest"), []versionCommand{{"pi", []string{"pi", "--version"}}}},
 	}
 }
 
+func (m *manager) ensureRust() error {
+	if m.managedStatus("rust").Installed {
+		return nil
+	}
+	if !executable(m.at(".cargo/bin/rustup")) {
+		return m.installer("https://sh.rustup.rs", "sh", "-y", "--no-modify-path", "--default-toolchain", "stable")
+	}
+	if installed := m.installedRustToolchain(); installed != "" {
+		return m.run(m.at(".cargo/bin/rustup"), "default", installed)
+	}
+	return m.run(m.at(".cargo/bin/rustup"), "default", "stable")
+}
+
+func (m *manager) updateRust() error {
+	if err := m.run(m.at(".cargo/bin/rustup"), "update", "stable"); err != nil {
+		return err
+	}
+	return m.run(m.at(".cargo/bin/rustup"), "default", "stable")
+}
+
+func (m *manager) installNVM() error {
+	version, err := m.latestTag("nvm-sh/nvm")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(m.at(".nvm"), 0755); err != nil {
+		return err
+	}
+	return m.installer("https://raw.githubusercontent.com/nvm-sh/nvm/"+version+"/install.sh", "bash")
+}
+
 func (m *manager) ensureNode() error {
+	if m.managedStatus("node").Installed {
+		return nil
+	}
 	if _, err := os.Stat(m.at(".nvm/nvm.sh")); os.IsNotExist(err) {
-		version := os.Getenv("SKY_TOOLS_NVM_VERSION")
-		if version == "" {
-			version = "v0.40.1"
-		}
-		if !releaseVersion.MatchString(strings.TrimPrefix(version, "v")) {
-			return fmt.Errorf("invalid nvm version %q", version)
-		}
-		if err := os.MkdirAll(m.at(".nvm"), 0755); err != nil {
-			return err
-		}
-		if err := m.installer("https://raw.githubusercontent.com/nvm-sh/nvm/"+version+"/install.sh", "bash"); err != nil {
+		if err := m.installNVM(); err != nil {
 			return err
 		}
 	} else if err != nil {
@@ -76,12 +111,19 @@ func (m *manager) ensureNode() error {
 	return m.node(false)
 }
 
+func (m *manager) updateNode() error {
+	if err := m.installNVM(); err != nil {
+		return err
+	}
+	return m.node(true)
+}
+
 func (m *manager) node(update bool) error {
 	script := `. "$NVM_DIR/nvm.sh"
 if [ "$(nvm version 'lts/*')" = N/A ]; then nvm install --lts; fi
 nvm alias default 'lts/*' >/dev/null
 nvm use --silent default
-if ! command -v pnpm >/dev/null 2>&1; then npm install --global pnpm; fi
+if [ ! -x "$(dirname "$(nvm which current)")/pnpm" ]; then npm install --global pnpm@latest; fi
 `
 	if update {
 		script = `. "$NVM_DIR/nvm.sh"
@@ -118,21 +160,31 @@ npm install --global pnpm@latest
 }
 
 func (m *manager) ensureFZF() error {
+	return m.installFZF()
+}
+
+func (m *manager) updateFZF() error { return m.installFZF() }
+
+func (m *manager) installFZF() error {
+	tag, err := m.latestTag("junegunn/fzf")
+	if err != nil {
+		return err
+	}
 	if _, err := os.Stat(m.at(".fzf/.git")); os.IsNotExist(err) {
-		if err := m.run("git", "clone", "--depth", "1", "https://github.com/junegunn/fzf.git", m.at(".fzf")); err != nil {
+		if err := m.run("git", "clone", "--depth", "1", "--branch", tag, "https://github.com/junegunn/fzf.git", m.at(".fzf")); err != nil {
 			return err
 		}
 	} else if err != nil {
 		return err
+	} else {
+		if err := m.run("git", "-C", m.at(".fzf"), "fetch", "--depth", "1", "origin", "tag", tag); err != nil {
+			return err
+		}
+		if err := m.run("git", "-C", m.at(".fzf"), "checkout", "--detach", tag); err != nil {
+			return err
+		}
 	}
-	return m.run(m.at(".fzf/install"), "--bin")
-}
-
-func (m *manager) updateFZF() error {
-	if err := m.run("git", "-C", m.at(".fzf"), "pull", "--ff-only"); err != nil {
-		return err
-	}
-	return m.run(m.at(".fzf/install"), "--bin")
+	return m.installFZFBinary(tag)
 }
 
 func (m *manager) installOpam() error {
@@ -219,6 +271,18 @@ func (m *manager) compiler() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("query OCaml compilers: %w: %s", err, output)
 	}
+	lts, err := m.ocamlLTS()
+	if err != nil {
+		return "", fmt.Errorf("query OCaml release policy: %w", err)
+	}
+	if lts != "" {
+		for _, version := range strings.Fields(output) {
+			if version == lts {
+				return "ocaml-base-compiler." + lts, nil
+			}
+		}
+		return "", fmt.Errorf("advertised OCaml LTS %s is not available in opam", lts)
+	}
 	return latestCompiler(output)
 }
 
@@ -254,7 +318,10 @@ func (m *manager) ensureOCaml() error {
 	}
 	for _, name := range strings.Fields(output) {
 		if name == "default" {
-			return nil
+			if executable(m.at(".opam/default/bin/ocaml")) && executable(m.at(".opam/default/bin/ocamlc")) {
+				return nil
+			}
+			return m.run(m.at(".local/bin/opam"), "reinstall", "--switch=default", "--yes", "ocaml-base-compiler")
 		}
 	}
 	compiler, err := m.compiler()
@@ -335,5 +402,5 @@ func (m *manager) ensurePi() error {
 	if err := os.MkdirAll(m.at(".local/share/pnpm/bin"), 0755); err != nil {
 		return err
 	}
-	return m.run(m.at(".local/bin/pnpm"), "add", "--global", "--ignore-scripts", "@earendil-works/pi-coding-agent")
+	return m.run("pnpm", "add", "--global", "--ignore-scripts", "@earendil-works/pi-coding-agent")
 }

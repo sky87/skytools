@@ -3,10 +3,10 @@ export NVM_DIR="$HOME/.nvm"
 export RUSTUP_HOME="$HOME/.rustup"
 export CARGO_HOME="$HOME/.cargo"
 export BUN_INSTALL="$HOME/.bun"
-export DOTNET_ROOT="$HOME/.dotnet"
-export GOROOT="$HOME/.go/current"
+[ ! -x "$HOME/.dotnet/dotnet" ] || export DOTNET_ROOT="$HOME/.dotnet"
+[ ! -x "$HOME/.go/current/bin/go" ] || export GOROOT="$HOME/.go/current"
 export GOPATH="$HOME/go"
-export JAVA_HOME="$HOME/.jdk/current"
+[ ! -x "$HOME/.jdk/current/bin/java" ] || export JAVA_HOME="$HOME/.jdk/current"
 export FZF_HOME="$HOME/.fzf"
 export OPAMROOT="$HOME/.opam"
 export ELAN_HOME="$HOME/.elan"
@@ -15,7 +15,7 @@ export DOTNET_CLI_TELEMETRY_OPTOUT=1
 
 # Prepend missing entries without growing PATH every time the file is sourced.
 for _skytools_dir in "$ELAN_HOME/bin" "$OPAMROOT/default/bin" "$FZF_HOME/bin" \
-  "$JAVA_HOME/bin" "$GOPATH/bin" "$GOROOT/bin" "$DOTNET_ROOT" "$BUN_INSTALL/bin" \
+  "$HOME/.jdk/current/bin" "$GOPATH/bin" "$HOME/.go/current/bin" "$HOME/.dotnet" "$BUN_INSTALL/bin" \
   "$CARGO_HOME/bin" "$NVM_DIR/current/bin" "$PNPM_HOME" "$PNPM_HOME/bin" \
   "$HOME/.opencode/bin" "$HOME/.local/bin"; do
   case ":${PATH:-}:" in

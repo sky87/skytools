@@ -44,14 +44,14 @@ func (m *manager) installGo() error {
 	}
 	root := m.at(".go/releases")
 	target := filepath.Join(root, version)
-	if !executable(filepath.Join(target, "bin/go")) {
+	if !executable(filepath.Join(target, "bin/go")) || nativeGoVersion(target) != version {
 		dir, err := m.archive("https://go.dev/dl/"+name, checksum, root)
 		if err != nil {
 			return err
 		}
 		defer os.RemoveAll(dir)
 		source := filepath.Join(dir, "contents/go")
-		if !executable(filepath.Join(source, "bin/go")) {
+		if !executable(filepath.Join(source, "bin/go")) || nativeGoVersion(source) != version {
 			return fmt.Errorf("unexpected Go archive layout")
 		}
 		if err := os.RemoveAll(target); err != nil {
@@ -79,15 +79,11 @@ func correttoAsset(system, arch, major string) (string, error) {
 	return fmt.Sprintf("amazon-corretto-%s-%s-%s-jdk.tar.gz", major, architecture, platform), nil
 }
 
-func (m *manager) correttoMajor() string {
-	if value := os.Getenv("SKY_TOOLS_CORRETTO_VERSION"); value != "" {
-		return value
-	}
-	return "25"
-}
-
 func (m *manager) installJDK() error {
-	major := m.correttoMajor()
+	major, err := m.correttoMajor()
+	if err != nil {
+		return err
+	}
 	name, err := correttoAsset(runtime.GOOS, runtime.GOARCH, major)
 	if err != nil {
 		return err
@@ -102,7 +98,7 @@ func (m *manager) installJDK() error {
 	}
 	root := m.at(".jdk/releases")
 	target := filepath.Join(root, "corretto-"+major+"-"+checksum[:16])
-	if !executable(filepath.Join(target, "bin/java")) || !executable(filepath.Join(target, "bin/javac")) {
+	if !correttoJDK(target) {
 		dir, err := m.archive("https://corretto.aws/downloads/latest/"+name, checksum, root)
 		if err != nil {
 			return err
@@ -119,7 +115,7 @@ func (m *manager) installJDK() error {
 		if runtime.GOOS == "darwin" {
 			source = filepath.Join(source, "Contents/Home")
 		}
-		if !executable(filepath.Join(source, "bin/java")) || !executable(filepath.Join(source, "bin/javac")) {
+		if !correttoJDK(source) {
 			return fmt.Errorf("unexpected Corretto archive layout")
 		}
 		if err := os.RemoveAll(target); err != nil {
@@ -129,34 +125,22 @@ func (m *manager) installJDK() error {
 			return err
 		}
 	}
-	if err := atomicWrite(filepath.Join(target, ".sky-tools-provider"), []byte("amazon-corretto-"+major+"\n"), 0644); err != nil {
-		return err
-	}
-	if err := atomicWrite(filepath.Join(target, ".sky-tools-sha256"), []byte(checksum+"\n"), 0644); err != nil {
-		return err
-	}
 	return link(target, m.at(".jdk/current"))
 }
 
 func (m *manager) ensureJDK() error {
-	provider, _ := os.ReadFile(m.at(".jdk/current/.sky-tools-provider"))
-	if executable(m.at(".jdk/current/bin/java")) && executable(m.at(".jdk/current/bin/javac")) && strings.TrimSpace(string(provider)) == "amazon-corretto-"+m.correttoMajor() {
+	if correttoJDK(m.at(".jdk/current")) {
 		return nil
 	}
 	return m.installJDK()
 }
 
 func (m *manager) installGH() error {
-	var release struct {
-		TagName string `json:"tag_name"`
-	}
-	if err := m.json("https://api.github.com/repos/cli/cli/releases/latest", &release); err != nil {
+	tag, err := m.latestTag("cli/cli")
+	if err != nil {
 		return err
 	}
-	version := strings.TrimPrefix(release.TagName, "v")
-	if !releaseVersion.MatchString(version) {
-		return fmt.Errorf("invalid GitHub CLI release %q", release.TagName)
-	}
+	version := strings.TrimPrefix(tag, "v")
 	installed, _ := m.output(m.at(".local/bin/gh"), "--version")
 	if strings.HasPrefix(installed, "gh version "+version+" ") {
 		return nil
@@ -191,4 +175,35 @@ func (m *manager) installGH() error {
 		return err
 	}
 	return atomicWrite(m.at(".local/bin/gh"), data, 0755)
+}
+
+func (m *manager) installFZFBinary(tag string) error {
+	version := strings.TrimPrefix(tag, "v")
+	if !releaseVersion.MatchString(version) {
+		return fmt.Errorf("invalid fzf release %q", tag)
+	}
+	name := fmt.Sprintf("fzf-%s-%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
+	base := "https://github.com/junegunn/fzf/releases/download/" + tag + "/"
+	checksums, err := m.fetch(base + "fzf_" + version + "_checksums.txt")
+	if err != nil {
+		return err
+	}
+	checksum, err := checksumFor(checksums, name)
+	if err != nil {
+		return err
+	}
+	dir, err := m.archive(base+name, checksum, m.at(".fzf"))
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	source := filepath.Join(dir, "contents/fzf")
+	if !executable(source) {
+		return fmt.Errorf("unexpected fzf archive layout")
+	}
+	data, err := os.ReadFile(source)
+	if err != nil {
+		return err
+	}
+	return atomicWrite(m.at(".fzf/bin/fzf"), data, 0755)
 }
