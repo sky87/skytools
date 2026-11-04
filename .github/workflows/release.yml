@@ -1,0 +1,22 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test in minimal Docker image
+        run: make smoke
+      - name: Cross-compile standalone binaries in Docker
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: make release VERSION="$RELEASE_VERSION"
+      - name: Publish private release and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" dist/skytools_* dist/SHA256SUMS --verify-tag --generate-notes --title "$RELEASE_TAG"
