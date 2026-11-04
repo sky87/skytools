@@ -106,8 +106,21 @@ func (d *dashboardModel) preview() string {
 		return "No packages selected."
 	}
 	text := "Selected: " + strings.Join(names, ", ")
-	if d.selected["pi"] && !d.selected["node"] {
-		text = "Node automatically included for pi | " + text
+	var catalog []tool
+	for _, p := range d.packages {
+		catalog = append(catalog, tool{name: p.Name})
+	}
+	resolved, err := selectTools(catalog, strings.Join(names, ","), true)
+	if err == nil {
+		var extra []string
+		for _, t := range resolved {
+			if !d.selected[t.name] {
+				extra = append(extra, t.name)
+			}
+		}
+		if len(extra) > 0 {
+			text = "Also included: " + strings.Join(extra, ", ") + " | " + text
+		}
 	}
 	return text
 }
@@ -194,7 +207,7 @@ func (d *dashboardModel) frame(ui *termui.Context, width, height int, event term
 	}
 	ui.Label(1, 4, "Action: "+d.action.label()+" | Space toggles a focused package", termui.StyleAccent)
 	if width >= 80 {
-		ui.Label(5, 5, fmt.Sprintf("%-10s %-10s %-12s %-12s %-6s %s", "Package", "State", "Installed", "Latest", "Target", "Update"), termui.StyleMuted)
+		ui.Label(5, 5, fmt.Sprintf("%-14s %-10s %-11s %-11s %-6s %s", "Package", "State", "Installed", "Latest", "Target", "Update"), termui.StyleMuted)
 	} else {
 		ui.Label(5, 5, fmt.Sprintf("%-10s %-11s %-11s %s", "Package", "Installed", "Latest", ""), termui.StyleMuted)
 	}
@@ -223,17 +236,14 @@ func (d *dashboardModel) frame(ui *termui.Context, width, height int, event term
 	for i, p := range d.packages {
 		value := d.selected[p.Name]
 		name := p.Name
-		if name == "pi" {
-			name = "pi (+Node)"
-		}
 		current, latest, channel, status, style := d.versionCells(p)
-		label := fmt.Sprintf("%-10s %-10s %-12s %-12s %-6s %s", name, packageState(p), versionColumn(current, 12), versionColumn(latest, 12), channel, status)
+		label := fmt.Sprintf("%-14s %-10s %-11s %-11s %-6s %s", versionColumn(name, 14), packageState(p), versionColumn(current, 11), versionColumn(latest, 11), channel, status)
 		if width < 80 {
 			marker := ""
 			if status == "Update available" {
 				marker = "UPD"
 			}
-			label = fmt.Sprintf("%-10s %-11s %-11s %s", name, versionColumn(current, 11), versionColumn(latest, 11), marker)
+			label = fmt.Sprintf("%-10s %-11s %-11s %s", versionColumn(name, 10), versionColumn(current, 11), versionColumn(latest, 11), marker)
 		}
 		row := listTop + i - d.scroll
 		if i < d.scroll || i >= d.scroll+listHeight {
@@ -245,8 +255,8 @@ func (d *dashboardModel) frame(ui *termui.Context, width, height int, event term
 			d.selected[p.Name] = value
 		}
 		if width >= 80 {
-			ui.Label(40, row, fmt.Sprintf("%-12s", versionColumn(latest, 12)), style)
-			ui.Label(60, row, status, style)
+			ui.Label(43, row, fmt.Sprintf("%-11s", versionColumn(latest, 11)), style)
+			ui.Label(62, row, status, style)
 		} else if status == "Update available" {
 			ui.Label(40, row, "UPD", style)
 		}
@@ -257,6 +267,9 @@ func (d *dashboardModel) frame(ui *termui.Context, width, height int, event term
 	for _, p := range d.packages {
 		if ui.Focused() == "package-"+p.Name {
 			detail = d.versionDetail(p) + " | " + packageDetail(p)
+			if dependencies := packageRequirements[p.Name].Tools; len(dependencies) > 0 {
+				detail = "Requires: " + strings.Join(dependencies, ", ") + " | " + detail
+			}
 			if detail == "" {
 				detail = p.Label + ": no local version or path available."
 			}

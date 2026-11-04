@@ -42,6 +42,8 @@ func TestCatalogMatchesEveryPrimaryPackagePolicy(t *testing.T) {
 		"https://releases.openai.com/codex/channels/latest":                               `{"tag_name":"rust-v0.166.0"}`,
 		"https://registry.npmjs.org/opencode-ai/latest":                                   `{"version":"1.19.5"}`,
 		"https://registry.npmjs.org/@earendil-works/pi-coding-agent/latest":               `{"version":"1.5.0"}`,
+		"https://registry.npmjs.org/playwright/latest":                                    `{"version":"1.64.1"}`,
+		"https://registry.npmjs.org/@playwright/cli/latest":                               `{"version":"0.1.23"}`,
 	}
 	responses["https://go.dev/dl/?mode=json"] = fmt.Sprintf(`[{"version":"go1.28.1","stable":true,"files":[{"filename":"go1.28.1.%s-%s.tar.gz","os":%q,"arch":%q,"kind":"archive","sha256":%q}]}]`, runtime.GOOS, runtime.GOARCH, runtime.GOOS, runtime.GOARCH, strings.Repeat("a", 64))
 	for _, repo := range []string{"astral-sh/uv", "oven-sh/bun", "junegunn/fzf", "cli/cli", "leanprover/lean4", "aristocratos/btop"} {
@@ -49,6 +51,7 @@ func TestCatalogMatchesEveryPrimaryPackagePolicy(t *testing.T) {
 	}
 	responses["https://api.github.com/repos/oven-sh/bun/releases/latest"] = `{"tag_name":"bun-v1.2.3","draft":false,"prerelease":false}`
 	want := map[string]string{"uv": "1.2.3", "rust": "1.99.1", "node": "28.3.0", "bun": "1.2.3", "dotnet": "12.0.101", "go": "1.28.1", "jdk": "29.0.1.0.4", "fzf": "1.2.3", "gh": "1.2.3", "ocaml": "6.0.1", "lean": "1.2.3", "claude": "2.1.311", "codex": "0.166.0", "opencode": "1.19.5", "pi": "1.5.0", "btop": "1.2.3"}
+	want["playwright"], want["playwright-cli"] = "1.64.1", "0.1.23"
 	m := testManager(t)
 	m.client.Transport = transportFunc(func(req *http.Request) (*http.Response, error) {
 		body, ok := responses[req.URL.String()]

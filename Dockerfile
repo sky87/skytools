@@ -34,12 +34,11 @@ WORKDIR /home/dev
 ENTRYPOINT ["skytools"]
 CMD []
 
-# OCaml builds its compiler from source. Keep its native prerequisites out of
-# the minimal runtime, and opt into Docker as opam's isolation boundary.
+# Keep the full set of native prerequisites out of the minimal runtime.
+# Docker provides the opt-in isolation boundary for opam in this test stage.
 FROM runtime AS full
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential m4 pkg-config libgmp-dev bubblewrap rsync \
+RUN skytools deps install \
     && rm -rf /var/lib/apt/lists/*
 USER dev
 ENV SKY_TOOLS_DISABLE_OPAM_SANDBOX=1

@@ -14,6 +14,7 @@ type debianRequirement struct {
 	all      []string
 	pattern  string
 	install  string
+	expand   func(debianPackageProvider) ([]string, error)
 }
 
 var debianRequirements = map[string]debianRequirement{
@@ -31,6 +32,7 @@ var debianRequirements = map[string]debianRequirement{
 	"gmp-dev":          {packages: []string{"libgmp-dev"}, install: "libgmp-dev"},
 	"gmp-runtime":      {packages: []string{"libgmp10"}, install: "libgmp10"},
 	"process-sandbox":  {packages: []string{"bubblewrap"}, install: "bubblewrap"},
+	"file-sync":        {packages: []string{"rsync"}, install: "rsync"},
 	"cxx-runtime":      {packages: []string{"libstdc++6"}, install: "libstdc++6"},
 	"libc-runtime":     {packages: []string{"libc6"}, install: "libc6"},
 	"gcc-runtime":      {packages: []string{"libgcc-s1"}, install: "libgcc-s1"},
@@ -40,13 +42,16 @@ var debianRequirements = map[string]debianRequirement{
 	// Debian/Ubuntu runtime package names vary across releases (including t64).
 	// Development packages pull the current runtime when one is missing. The
 	// supported .NET LTS distributions use OpenSSL 3.
-	"icu-runtime": {pattern: `^libicu[0-9]+(?:t64)?$`, install: "libicu-dev"},
-	"ssl-runtime": {pattern: `^libssl3(?:t64)?$`, install: "libssl-dev"},
-	"terminfo":    {packages: []string{"ncurses-base"}, install: "ncurses-base"},
+	"icu-runtime":         {pattern: `^libicu[0-9]+(?:t64)?$`, install: "libicu-dev"},
+	"ssl-runtime":         {pattern: `^libssl3(?:t64)?$`, install: "libssl-dev"},
+	"terminfo":            {packages: []string{"ncurses-base"}, install: "ncurses-base"},
+	"playwright-browsers": {expand: debianPackageProvider.playwrightPackages},
 }
 
 type debianPackageProvider struct {
 	architecture string
+	distribution string
+	version      string
 	query        func(context.Context) (string, error)
 	run          func(context.Context, ...string) error
 }
@@ -62,15 +67,38 @@ func (p debianPackageProvider) Check(ctx context.Context, deps []SystemDependenc
 	installed := map[string]bool{}
 	for _, line := range strings.Split(output, "\n") {
 		fields := strings.Split(line, "\t")
-		if len(fields) != 3 || fields[2] != "installed" || (fields[1] != "all" && fields[1] != p.architecture) {
+		if (len(fields) != 3 && len(fields) != 4) || fields[2] != "installed" || (fields[1] != "all" && fields[1] != p.architecture) {
 			continue
 		}
 		installed[strings.SplitN(fields[0], ":", 2)[0]] = true
+		if len(fields) == 4 {
+			for _, provided := range strings.Split(fields[3], ",") {
+				if names := strings.Fields(provided); len(names) > 0 {
+					installed[strings.SplitN(names[0], ":", 2)[0]] = true
+				}
+			}
+		}
 	}
 	for _, dep := range deps {
 		rule, ok := debianRequirements[dep.Capability]
 		if !ok {
 			return report, fmt.Errorf("no Debian mapping for capability %s", dep.Capability)
+		}
+		if rule.expand != nil {
+			packages, err := rule.expand(p)
+			if err != nil {
+				return report, err
+			}
+			var missing []string
+			for _, name := range packages {
+				if !installed[name] {
+					missing = append(missing, name)
+				}
+			}
+			if len(missing) > 0 {
+				report.Missing = append(report.Missing, MissingSystemDependency{dep.Capability, missing, dep.RequiredBy})
+			}
+			continue
 		}
 		found := false
 		for _, name := range rule.packages {

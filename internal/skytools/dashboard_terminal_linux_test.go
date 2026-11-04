@@ -57,7 +57,7 @@ printf 'uv fixture installation finished\n'
 		t.Fatal(err)
 	}
 	pty.waitFor(0, "Operation completed.", 3*time.Second)
-	pty.waitFor(0, "uv         Installed", 3*time.Second)
+	pty.waitFor(0, "uv             Installed", 3*time.Second)
 	if !executable(m.at(".local/bin/uv")) {
 		t.Fatal("completed dashboard operation did not create executable uv")
 	}

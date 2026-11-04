@@ -16,7 +16,7 @@ from Bash to Go. Keep that source repository unchanged unless asked otherwise.
 - `internal/termui`: original immediate-mode terminal controls, raw input,
   sanitized canvas rendering, and terminal restoration. No external TUI library.
 - `Dockerfile`: Go build/test stages, a minimal non-root runtime, and a separate
-  stage with OCaml build prerequisites.
+  stage with every managed tool's system prerequisites.
 - `scripts/`: container smoke checks and release cross-compilation.
 - `.github/workflows/`: Docker CI and tagged binary releases.
 
@@ -64,8 +64,17 @@ installed native/all-architecture dpkg packages. Report missing packages and an
 apt command; never run it automatically. Keep `deps` read-only; `deps install` is
 the explicit opt-in installation path. Declare tool dependencies in code and
 resolve their transitive closure before checking or installing prerequisites.
-Include automatic
-tool dependencies such as Node for pi. btop uses its checksummed official Linux
+Include automatic tool dependencies such as Node for pi and Playwright.
+`playwright-cli` requires `playwright`, which requires Node. Keep both dependency
+relationships and system capabilities in code. Browser dependency tables are
+upstream data with attribution and license in `playwrightdata`, not Go modules.
+Use the CLI's own driver/browser revisions independently of the script library.
+Install libraries in the managed home prefix and provide `playwright-node` for
+CommonJS/ES module scripts without editing project dependencies. Prefer project
+packages over the shared fallback. Keep inventory filesystem-only, including
+native browser revisions and completion markers. Preserve existing user and
+project browser configuration; do not install agent skills automatically.
+btop uses its checksummed official Linux
 release binary in `~/.local/bin/btop`.
 
 ## Development and validation
@@ -79,6 +88,8 @@ Host Git, gh, Docker, make, and file editing are permitted as orchestration.
 - `make test`: stdlib-only dependency assertion, gofmt check, go vet, unit tests.
 - `make smoke`: also run the standalone executable in a minimal non-root container.
 - `make integration`: real uv/Go/gh/btop installation, then offline ensure and status.
+- `make playwright-integration`: agent CLI, script libraries, and all browsers;
+  test offline use, cached repair, and project-local module precedence.
 - `make full-integration`: complete tool installation with native prerequisites.
 - `make build`: export a Linux binary to `dist/`.
 - `make release VERSION=vX.Y.Z`: cross-compile four release binaries and checksums.

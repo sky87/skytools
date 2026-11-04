@@ -28,10 +28,14 @@ func (m *manager) scan(tools []tool) []PackageStatus {
 		}
 		s.Name, s.Label, s.Channel = t.name, t.label, packageChannel(t.name)
 		if s.Installed {
+			detail := s.Detail
 			if s.Origin == "system" {
 				s.Detail = "Available on PATH; updates install a managed copy in your home"
 			} else {
 				s.Detail = "Installed in your home"
+			}
+			if detail != "" {
+				s.Detail += " | " + detail
 			}
 		} else if s.Partial {
 			if s.Detail == "" {
@@ -141,6 +145,9 @@ func nativePackageVersion(binary string) string {
 }
 
 func (m *manager) managedStatus(name string) PackageStatus {
+	if name == "playwright" || name == "playwright-cli" {
+		return m.managedPlaywrightStatus(name)
+	}
 	s := PackageStatus{Origin: "managed"}
 	var paths []string
 	switch name {

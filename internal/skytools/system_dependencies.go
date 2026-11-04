@@ -56,22 +56,24 @@ func (r SystemDependencyReport) packageNames() []string {
 type toolRequirements struct{ Tools, Install, Runtime []string }
 
 var packageRequirements = map[string]toolRequirements{
-	"uv":       {Install: []string{"certificates", "http-client", "tar", "gzip"}},
-	"rust":     {Install: []string{"certificates", "http-client", "tar", "gzip", "xz"}, Runtime: []string{"c-build", "pkg-config"}},
-	"node":     {Install: []string{"certificates", "http-client", "bash", "git", "tar", "xz"}, Runtime: []string{"cxx-runtime"}},
-	"bun":      {Install: []string{"certificates", "http-client", "bash", "unzip"}},
-	"dotnet":   {Install: []string{"certificates", "http-client", "bash", "tar", "gzip"}, Runtime: []string{"certificates", "libc-runtime", "gcc-runtime", "icu-runtime", "ssl-runtime", "cxx-runtime", "zlib-runtime", "kerberos-runtime", "timezone-data"}},
-	"go":       {Install: []string{"certificates"}},
-	"jdk":      {Install: []string{"certificates"}, Runtime: []string{"cxx-runtime", "zlib-runtime"}},
-	"fzf":      {Install: []string{"certificates", "git"}},
-	"gh":       {Install: []string{"certificates"}},
-	"ocaml":    {Install: []string{"certificates", "http-client", "tar", "gzip", "unzip", "git", "c-build", "m4", "pkg-config", "gmp-dev", "process-sandbox"}, Runtime: []string{"c-build"}},
-	"lean":     {Install: []string{"certificates", "http-client", "tar", "gzip"}, Runtime: []string{"c-build", "gmp-runtime"}},
-	"claude":   {Install: []string{"certificates", "http-client", "bash"}, Runtime: []string{"cxx-runtime"}},
-	"codex":    {Install: []string{"certificates", "http-client", "tar", "gzip"}},
-	"opencode": {Install: []string{"certificates", "http-client", "bash", "tar", "gzip", "unzip"}},
-	"pi":       {Tools: []string{"node"}, Install: []string{"certificates"}},
-	"btop":     {Install: []string{"certificates"}, Runtime: []string{"terminfo"}},
+	"uv":             {Install: []string{"certificates", "http-client", "tar", "gzip"}},
+	"rust":           {Install: []string{"certificates", "http-client", "tar", "gzip", "xz"}, Runtime: []string{"c-build", "pkg-config"}},
+	"node":           {Install: []string{"certificates", "http-client", "bash", "git", "tar", "xz"}, Runtime: []string{"cxx-runtime"}},
+	"bun":            {Install: []string{"certificates", "http-client", "bash", "unzip"}},
+	"dotnet":         {Install: []string{"certificates", "http-client", "bash", "tar", "gzip"}, Runtime: []string{"certificates", "libc-runtime", "gcc-runtime", "icu-runtime", "ssl-runtime", "cxx-runtime", "zlib-runtime", "kerberos-runtime", "timezone-data"}},
+	"go":             {Install: []string{"certificates"}},
+	"jdk":            {Install: []string{"certificates"}, Runtime: []string{"cxx-runtime", "zlib-runtime"}},
+	"fzf":            {Install: []string{"certificates", "git"}},
+	"gh":             {Install: []string{"certificates"}},
+	"ocaml":          {Install: []string{"certificates", "http-client", "tar", "gzip", "unzip", "git", "c-build", "m4", "pkg-config", "gmp-dev", "process-sandbox", "file-sync"}, Runtime: []string{"c-build"}},
+	"lean":           {Install: []string{"certificates", "http-client", "tar", "gzip"}, Runtime: []string{"c-build", "gmp-runtime"}},
+	"claude":         {Install: []string{"certificates", "http-client", "bash"}, Runtime: []string{"cxx-runtime"}},
+	"codex":          {Install: []string{"certificates", "http-client", "tar", "gzip"}},
+	"opencode":       {Install: []string{"certificates", "http-client", "bash", "tar", "gzip", "unzip"}},
+	"pi":             {Tools: []string{"node"}, Install: []string{"certificates"}},
+	"btop":           {Install: []string{"certificates"}, Runtime: []string{"terminfo"}},
+	"playwright":     {Tools: []string{"node"}, Install: []string{"certificates"}, Runtime: []string{"playwright-browsers"}},
+	"playwright-cli": {Tools: []string{"playwright"}, Install: []string{"certificates"}, Runtime: []string{"playwright-browsers"}},
 }
 
 func dependenciesFor(command string, tools []tool, states []PackageStatus) []SystemDependency {
@@ -137,8 +139,10 @@ func (m *manager) systemPackageProvider() (SystemPackageProvider, error) {
 		}
 		provider = debianPackageProvider{
 			architecture: runtime.GOARCH,
+			distribution: id,
+			version:      nativeValue("/etc/os-release", "VERSION_ID"),
 			query: func(ctx context.Context) (string, error) {
-				return m.outputContext(ctx, "/usr/bin/dpkg-query", "--show", "--showformat=${Package}\t${Architecture}\t${db:Status-Status}\n")
+				return m.outputContext(ctx, "/usr/bin/dpkg-query", "--show", "--showformat=${Package}\t${Architecture}\t${db:Status-Status}\t${Provides}\n")
 			},
 			run: func(ctx context.Context, args ...string) error {
 				cmd, err := m.command(ctx, args...)
@@ -190,6 +194,7 @@ func (m *manager) preflight(command string, selected []tool) error {
 		m.log("  %s: %s (needed by %s)", dep.Capability, strings.Join(dep.Packages, ", "), strings.Join(dep.RequiredBy, ", "))
 	}
 	m.log("run: %s", report.InstallCommand)
+	m.log("or run as root: skytools deps install --only %s", toolNames(selected))
 	m.log("inspect requirements with: skytools deps --only %s", toolNames(selected))
 	return &systemDependenciesError{report}
 }

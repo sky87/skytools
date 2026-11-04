@@ -52,6 +52,7 @@ func populateInventory(t testing.TB, m *manager) {
 	} {
 		inventoryFile(t, m, name, text, 0644)
 	}
+	populatePlaywrightInventory(t, m)
 }
 func inventorySnapshot(t testing.TB, root string) map[string]string {
 	t.Helper()
@@ -76,7 +77,7 @@ func TestInventoryIsOfflineReadOnlyAndDoesNotExecuteTools(t *testing.T) {
 	populateInventory(t, m)
 	before := inventorySnapshot(t, m.home)
 	statuses := m.scan(m.tools())
-	if len(statuses) != 16 {
+	if len(statuses) != 18 {
 		t.Fatalf("got %d packages", len(statuses))
 	}
 	for _, s := range statuses {

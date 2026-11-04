@@ -1,0 +1,10 @@
+Browser system dependency package lists are derived from Microsoft Playwright:
+https://github.com/microsoft/playwright/blob/1af60d94ac714d4007828bafa02b0f1cbd8646b9/packages/playwright-core/src/server/registry/nativeDeps.ts
+
+Copyright (c) Microsoft Corporation.
+Licensed under Apache License 2.0; see LICENSE in this directory.
+
+The data contains the union of the upstream tools, Chromium, Firefox, and WebKit
+dependencies for each supported distribution release. At this upstream revision,
+the amd64 and arm64 package lists are identical. Virtual Debian package names
+are checked using the installed native package's Provides field.

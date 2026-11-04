@@ -1,4 +1,4 @@
-.PHONY: test smoke integration full-integration build release fmt
+.PHONY: test smoke integration playwright-integration full-integration build release fmt
 export VERSION
 
 test:
@@ -16,6 +16,15 @@ integration: smoke
 	  docker run --rm --network none -v "$$test_volume:/home/dev" skytools-runtime ensure --only uv,go,gh,btop && \
 	  docker run --rm --network none -v "$$test_volume:/home/dev" -v "$(CURDIR)/scripts:/checks:ro" \
 	    --entrypoint sh skytools-runtime /checks/check-status.sh --only uv,go,gh,btop
+
+playwright-integration: smoke
+	docker build --target runtime -t skytools-runtime .
+	docker build -f scripts/playwright.Dockerfile -t skytools-playwright-test .
+	@test_volume=$$(docker volume create); \
+	  trap 'docker volume rm "$$test_volume" >/dev/null' EXIT; \
+	  docker run --rm --init -v "$$test_volume:/home/dev" skytools-playwright-test ensure --only playwright-cli && \
+	  docker run --rm --init --network none -v "$$test_volume:/home/dev" \
+	    --entrypoint sh skytools-playwright-test /checks/check-playwright.sh
 
 full-integration: smoke
 	docker build --target full -t skytools-full .

@@ -7,7 +7,7 @@ The application uses **only the Go standard library** and is built with CGO disa
 This is the Go migration of `sky-tools` from
 [`sky87/skydevcontainer`](https://github.com/sky87/skydevcontainer/blob/542474badc2f96613c8ab790f12e18f993af3fa1/sky-tools).
 It retains `ensure`, `update`, the managed tool set, and their existing home paths.
-The original repository is unchanged.
+The devcontainer now downloads this executable instead of bundling its Bash predecessor.
 
 ## Install on a target machine
 
@@ -55,6 +55,7 @@ skytools deps install --only rust,btop # explicitly install prerequisites as roo
 skytools list                    # show names accepted by --only
 skytools ensure --only uv,go,gh   # install a subset
 skytools ensure --only pi        # also ensures Node.js and pnpm
+skytools ensure --only playwright-cli # agent CLI, script libraries, browsers, Node.js
 skytools setup                   # configure the shell without installing tools
 eval "$(skytools env)"           # activate the environment in the current shell
 ```
@@ -130,12 +131,58 @@ old name. When downloading the binary yourself, an optional equivalent is
 | `opencode` | OpenCode | `~/.opencode/bin` |
 | `pi` | pi coding agent | `~/.local/share/pnpm` |
 | `btop` | btop resource monitor, latest stable Linux binary | `~/.local/bin/btop` |
+| `playwright` | Playwright and playwright-core Node libraries, Chromium, Firefox, WebKit | `~/.local/share/skytools/playwright`, `~/.cache/ms-playwright` |
+| `playwright-cli` | Microsoft's browser automation CLI for coding agents | same shared prefix; `~/.local/bin/playwright-cli` |
 
 Python versions can be installed with `uv python install` after setup. Operating
 system packages from the old devcontainer (editors, C/C++ compilers, LaTeX,
 document tools, native libraries) remain OS prerequisites rather than managed
 home installations. skytools never invokes `sudo`. Only the explicit
 `deps install` command invokes the platform's system package manager.
+
+## Browser automation
+
+`playwright-cli` depends on `playwright`, which depends on `node`. Selecting the
+CLI installs all three; selecting just `playwright` installs the script libraries
+and browsers. Both packages follow npm's latest stable release rather than a
+fixed version. Playwright has no LTS channel. Each package installs the browser
+revisions required by its own driver, which can differ between the CLI and library.
+
+```sh
+# On the target machine, as root:
+skytools deps install --only playwright-cli
+# As the target user:
+skytools ensure --only playwright-cli
+eval "$(skytools env)"
+playwright-cli open https://example.com
+playwright-cli snapshot
+playwright-cli close-all
+playwright-node script.mjs
+playwright-node script.cjs
+```
+
+Use `playwright-node` to run standalone Node scripts that import `playwright` or
+`playwright-core`, with either ES modules or CommonJS. It falls back to the shared
+home installation when the script has no local copy; project-local packages take
+precedence. For example, `script.mjs` can contain:
+
+```js
+import { chromium } from 'playwright';
+const browser = await chromium.launch({ headless: true });
+const page = await browser.newPage();
+await page.goto('https://example.com');
+console.log(await page.title());
+await browser.close();
+```
+
+The agent CLI defaults to its downloaded Chromium through
+`~/.playwright/cli.config.json`, created only when absent. Existing user and project
+configuration keeps the upstream precedence. skytools does not edit project
+dependencies or install agent skills. The libraries live under
+`~/.local/share/skytools/playwright/lib/node_modules`; command links are in
+`~/.local/bin`. Browser downloads use Playwright's native cache and respect
+`PLAYWRIGHT_BROWSERS_PATH`. Inventory reads package and browser metadata without
+starting Node or a browser, and reports incomplete downloads as needing repair.
 
 ## Release selection
 
@@ -207,16 +254,23 @@ checks are unsupported before installation begins.
 Installer prerequisites include Bash, CA certificates, curl, git, tar/gzip, unzip,
 and xz, depending on the tool. Rust/OCaml/Lean also need native build tools.
 .NET needs ICU, OpenSSL 3, the C/C++ and Kerberos runtimes, timezone data, and zlib.
-OCaml needs m4, pkg-config, GMP development files, and bubblewrap (unless opam
+OCaml needs m4, pkg-config, rsync, GMP development files, and bubblewrap (unless opam
 sandboxing is explicitly disabled as described above). btop needs terminal data
 (`ncurses-base`). Existing complete tools skip installer-only prerequisites on
 `ensure`, while runtime prerequisites are still checked. For missing ICU/OpenSSL,
 the suggested development packages pull in the distribution's runtime package.
+Playwright additionally needs its browser libraries, fonts, and Xvfb. Its Debian
+provider uses the upstream browser dependency tables for Debian 12/13 and Ubuntu
+22.04/24.04/26.04 on amd64/arm64, accepting configured virtual package providers
+such as the t64 replacements. Unknown browser platforms fail explicitly. Source
+attribution and the upstream license are in
+[`playwrightdata`](internal/skytools/playwrightdata/).
 
 The `runtime` Docker stage contains basic installer utilities and .NET runtime
 libraries, with no managed language toolchains preinstalled. The `full` stage
-adds only OCaml's build prerequisites. Neither includes the old devcontainer's
-editors, desktop libraries, profiling tools, or document stack.
+uses `skytools deps install` to add every managed tool's system prerequisites,
+including OCaml build tools and Playwright browser libraries. Neither includes
+the old devcontainer's editors, profiling tools, or document stack.
 
 ## Development: Docker only
 
@@ -229,6 +283,7 @@ make fmt               # gofmt inside Docker
 make test              # enforce stdlib-only modules, formatting, go vet, unit tests
 make smoke             # above + static executable in a minimal non-root container
 make integration       # install uv/Go/gh/btop, repeat ensure offline in the same test home
+make playwright-integration # install agent CLI/libraries; launch all browsers offline
 make full-integration  # install the complete tool set in an isolated Docker volume
 make build             # native Linux executable exported to dist/skytools
 make release VERSION=v0.1.0  # four executables + SHA256SUMS in dist/
@@ -246,8 +301,10 @@ comparisons, bounded workers, offline checks, stale refresh results, and actual
 terminal responsiveness/restoration. Dependency fixtures cover missing,
 unconfigured, and foreign-architecture packages and prevent installer execution
 after a failed preflight. `GOPROXY=off` and `GOSUMDB=off` are set in the
-Go container. CI runs the minimal-container checks and real subset installation
-on Linux amd64 and arm64.
+Go container. CI runs the minimal-container checks, real subset installation,
+and Playwright CLI/CommonJS/ES module checks with offline Chromium, Firefox,
+and WebKit on Linux amd64 and arm64. The browser checks also exercise cached
+repair and project-local module precedence.
 
 ## Releases
 

@@ -16,3 +16,5 @@ jobs:
       - uses: actions/checkout@v7
       - name: Unit checks, minimal-container smoke test, real installations, offline ensure
         run: make integration
+      - name: Playwright CLI and browser scripts as a normal user
+        run: make playwright-integration

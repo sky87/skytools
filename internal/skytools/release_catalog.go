@@ -212,10 +212,16 @@ func (m *manager) lookupLatestVersion(name string) (ReleaseInfo, error) {
 			var release githubRelease
 			err = m.metadataJSON(info.SourceURL, &release)
 			info.Version = cleanVersion(release.Tag)
-		case "opencode", "pi":
+		case "opencode", "pi", "playwright", "playwright-cli":
 			pkg := "opencode-ai"
 			if name == "pi" {
 				pkg = "@earendil-works/pi-coding-agent"
+			}
+			if name == "playwright" {
+				pkg = "playwright"
+			}
+			if name == "playwright-cli" {
+				pkg = "@playwright/cli"
 			}
 			info.SourceURL = "https://registry.npmjs.org/" + pkg + "/latest"
 			var metadata struct{ Version string }

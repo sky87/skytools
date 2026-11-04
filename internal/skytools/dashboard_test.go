@@ -28,7 +28,7 @@ func TestDashboardSelectionEligibilityAndDependencyPreview(t *testing.T) {
 	if got := strings.Join(d.names(), ","); got != "uv,pi" {
 		t.Fatalf("install selection = %s", got)
 	}
-	if !strings.HasPrefix(d.preview(), "Node automatically included for pi") {
+	if !strings.HasPrefix(d.preview(), "Also included: node") {
 		t.Fatalf("dependency absent from preview: %s", d.preview())
 	}
 	d.setAction(dashboardUpdate)
@@ -54,7 +54,7 @@ func TestDashboardDependencyVisibleBeforeClippedMetadata(t *testing.T) {
 	var ui termui.Context
 	d.frame(&ui, 80, 24, termui.Event{}, "test")
 	text := ui.EndFrame().Text()
-	if !strings.Contains(text, "pi (+Node)") || !strings.Contains(text, "Node automatically included for pi") {
+	if !strings.Contains(text, "pi") || !strings.Contains(text, "Also included: node") {
 		t.Fatalf("automatic dependency was clipped behind metadata: %s", text)
 	}
 }

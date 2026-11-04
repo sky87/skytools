@@ -1,0 +1,12 @@
+#!/bin/sh
+# Managed by skytools. Project-local modules retain their normal priority.
+prefix="$HOME/.local/share/skytools/playwright"
+SKYTOOLS_PLAYWRIGHT_MODULES="$prefix/lib/node_modules"
+NODE_PATH="$SKYTOOLS_PLAYWRIGHT_MODULES${NODE_PATH:+:$NODE_PATH}"
+export SKYTOOLS_PLAYWRIGHT_MODULES NODE_PATH
+if command -v node >/dev/null 2>&1; then
+  node_binary=node
+else
+  node_binary="$HOME/.local/bin/node"
+fi
+exec "$node_binary" --import "$prefix/skytools/register.mjs" "$@"
