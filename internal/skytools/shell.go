@@ -14,13 +14,7 @@ var shellEnv string
 const shellMarker = "# skytools environment"
 const shellHook = shellMarker + "\n[ ! -r \"$HOME/.config/skytools/env.sh\" ] || . \"$HOME/.config/skytools/env.sh\"\n"
 
-func (m *manager) setupShell() error {
-	if err := os.MkdirAll(m.at(".local/bin"), 0755); err != nil {
-		return err
-	}
-	if err := atomicWrite(m.at(".config/skytools/env.sh"), []byte(shellEnv), 0644); err != nil {
-		return err
-	}
+func (m *manager) shellProfiles() ([]string, error) {
 	profiles := []string{".profile", ".bashrc", ".zshrc"}
 	// Bash ignores .profile if either of these files already exists.
 	for _, name := range []string{".bash_profile", ".bash_login"} {
@@ -28,8 +22,39 @@ func (m *manager) setupShell() error {
 			profiles = append(profiles, name)
 			break
 		} else if !os.IsNotExist(err) {
-			return err
+			return nil, err
 		}
+	}
+	return profiles, nil
+}
+
+// profilesWithoutHook lets Review say what a run will change in shell files. It
+// only reads them.
+func (m *manager) profilesWithoutHook() []string {
+	profiles, err := m.shellProfiles()
+	if err != nil {
+		return nil
+	}
+	var missing []string
+	for _, profile := range profiles {
+		data, err := os.ReadFile(m.at(profile))
+		if err != nil || !strings.Contains(string(data), shellMarker) {
+			missing = append(missing, "~/"+profile)
+		}
+	}
+	return missing
+}
+
+func (m *manager) setupShell() error {
+	if err := os.MkdirAll(m.at(".local/bin"), 0755); err != nil {
+		return err
+	}
+	if err := atomicWrite(m.at(".config/skytools/env.sh"), []byte(shellEnv), 0644); err != nil {
+		return err
+	}
+	profiles, err := m.shellProfiles()
+	if err != nil {
+		return err
 	}
 	for _, profile := range profiles {
 		name := m.at(profile)

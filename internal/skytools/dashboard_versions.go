@@ -3,15 +3,10 @@ package skytools
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
-	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
-
-	"github.com/sky87/skytools/internal/termui"
 )
 
 const dashboardVersionWorkers = 4
@@ -20,6 +15,7 @@ const dashboardVersionTimeout = 10 * time.Second
 type dashboardVersionProbes struct {
 	installed func(context.Context, PackageStatus) (string, error)
 	latest    func(context.Context, string) (ReleaseInfo, error)
+	self      func(context.Context) (string, error)
 }
 
 type dashboardPackageVersions struct {
@@ -32,6 +28,7 @@ type dashboardVersionResult struct {
 	generation uint64
 	name       string
 	installed  bool
+	self       bool
 	version    string
 	release    ReleaseInfo
 	err        error
@@ -52,28 +49,64 @@ func (m *manager) versionProbes() dashboardVersionProbes {
 			worker.env = append([]string{}, m.env...)
 			return worker.latestVersion(name)
 		},
+		self: func(ctx context.Context) (string, error) {
+			worker := *m
+			worker.ctx, worker.out, worker.errOut = ctx, io.Discard, io.Discard
+			worker.env = append([]string{}, m.env...)
+			release, err := worker.githubRelease(selfRepository)
+			return release.Tag, err
+		},
 	}
 }
 
-// startDashboardVersions never touches UI state. Workers receive immutable
-// inventory values and return generation-tagged results to the UI goroutine.
-func startDashboardVersions(parent context.Context, generation uint64, packages []PackageStatus, probes dashboardVersionProbes) *dashboardVersionCheck {
-	ctx, cancel := context.WithCancel(parent)
-	type task struct {
-		p         PackageStatus
-		installed bool
-	}
-	var tasks []task
+type dashboardVersionTask struct {
+	p               PackageStatus
+	installed, self bool
+}
+
+func allVersionTasks(packages []PackageStatus) []dashboardVersionTask {
+	var tasks []dashboardVersionTask
 	for _, p := range packages {
 		if p.Installed && p.Version == "" {
-			tasks = append(tasks, task{p: p, installed: true})
+			tasks = append(tasks, dashboardVersionTask{p: p, installed: true})
 		}
 	}
 	for _, p := range packages {
-		tasks = append(tasks, task{p: p})
+		tasks = append(tasks, dashboardVersionTask{p: p})
 	}
+	return tasks
+}
+
+// pendingVersionTasks asks only for what is still unknown, so finishing a run
+// does not fetch every upstream version again.
+func (d *dashboardModel) pendingVersionTasks() []dashboardVersionTask {
+	var tasks []dashboardVersionTask
+	for _, p := range d.packages {
+		if d.versions[p.Name].installedChecking {
+			tasks = append(tasks, dashboardVersionTask{p: p, installed: true})
+		}
+	}
+	for _, p := range d.packages {
+		if d.versions[p.Name].latestChecking {
+			tasks = append(tasks, dashboardVersionTask{p: p})
+		}
+	}
+	if d.self.checking {
+		tasks = append(tasks, dashboardVersionTask{self: true})
+	}
+	return tasks
+}
+
+func startDashboardVersions(parent context.Context, generation uint64, packages []PackageStatus, probes dashboardVersionProbes) *dashboardVersionCheck {
+	return startDashboardVersionTasks(parent, generation, allVersionTasks(packages), probes)
+}
+
+// startDashboardVersionTasks never touches UI state. Workers receive immutable
+// inventory values and return generation-tagged results to the UI goroutine.
+func startDashboardVersionTasks(parent context.Context, generation uint64, tasks []dashboardVersionTask, probes dashboardVersionProbes) *dashboardVersionCheck {
+	ctx, cancel := context.WithCancel(parent)
 	check := &dashboardVersionCheck{cancel: cancel, results: make(chan dashboardVersionResult, len(tasks)), done: make(chan struct{})}
-	queue := make(chan task, len(tasks))
+	queue := make(chan dashboardVersionTask, len(tasks))
 	for _, task := range tasks {
 		queue <- task
 	}
@@ -88,10 +121,13 @@ func startDashboardVersions(parent context.Context, generation uint64, packages 
 					return
 				}
 				taskCtx, stop := context.WithTimeout(ctx, dashboardVersionTimeout)
-				result := dashboardVersionResult{generation: generation, name: task.p.Name, installed: task.installed}
-				if task.installed {
+				result := dashboardVersionResult{generation: generation, name: task.p.Name, installed: task.installed, self: task.self}
+				switch {
+				case task.self:
+					result.version, result.err = probes.self(taskCtx)
+				case task.installed:
 					result.version, result.err = probes.installed(taskCtx, task.p)
-				} else {
+				default:
 					result.release, result.err = probes.latest(taskCtx, task.p.Name)
 				}
 				if taskCtx.Err() != nil {
@@ -125,10 +161,24 @@ func (d *dashboardModel) resetVersions() {
 			latestChecking:    true,
 		}
 	}
+	d.self.checking, d.self.err = d.self.probe, nil
+}
+
+// resetInstalledVersion re-reads one package after a run touched it. The latest
+// version upstream has not changed because of that, so it is kept.
+func (d *dashboardModel) resetInstalledVersion(p PackageStatus) {
+	v := d.versions[p.Name]
+	v.installed, v.installedErr = p.Version, nil
+	v.installedChecking = p.Installed && p.Version == ""
+	d.versions[p.Name] = v
 }
 
 func (d *dashboardModel) applyVersion(result dashboardVersionResult) {
 	if result.generation != d.versionGeneration {
+		return
+	}
+	if result.self {
+		d.self.latest, d.self.err, d.self.checking = result.version, result.err, false
 		return
 	}
 	v, ok := d.versions[result.name]
@@ -146,6 +196,14 @@ func (d *dashboardModel) applyVersion(result dashboardVersionResult) {
 	d.versions[result.name] = v
 }
 
+func (d *dashboardModel) selfUpdateAvailable() bool {
+	if d.self.latest == "" || d.self.err != nil || d.self.updated != "" {
+		return false
+	}
+	comparison, known := compareVersions(d.version, d.self.latest)
+	return known && comparison < 0
+}
+
 func versionFailure(err error) string {
 	if err == nil {
 		return "unknown"
@@ -160,69 +218,65 @@ func versionFailure(err error) string {
 	return "error"
 }
 
-func (d *dashboardModel) versionCells(p PackageStatus) (installed, latest, channel, status string, style termui.Style) {
+type packageState int
+
+const (
+	stateChecking packageState = iota
+	stateCurrent
+	stateUpdate
+	stateMissing
+	stateIncomplete
+	stateCheckFailed
+	stateUnknown
+	stateAhead
+)
+
+// packageRow is what one list row shows. A version that could not be read says
+// why, and only a successful comparison can ever report an update.
+type packageRow struct {
+	installed, latest, channel string
+	state                      packageState
+}
+
+func (d *dashboardModel) row(p PackageStatus) packageRow {
 	v := d.versions[p.Name]
-	channel = v.channel
-	if channel == "" {
-		channel = p.Channel
-	}
-	installed, latest, status, style = v.installed, v.latest, "Unknown", termui.StyleMuted
-	if !p.Installed && !p.Partial {
-		installed = "missing"
-	} else if v.installedChecking {
-		installed = "checking"
-	} else if v.installedErr != nil || installed == "" {
-		installed = versionFailure(v.installedErr)
-	}
-	if v.latestChecking {
-		latest = "checking"
-	} else if v.latestErr != nil || latest == "" {
-		latest = versionFailure(v.latestErr)
+	row := packageRow{installed: v.installed, latest: v.latest, channel: v.channel, state: stateUnknown}
+	if row.channel == "" {
+		row.channel = p.Channel
 	}
 	switch {
 	case !p.Installed && !p.Partial:
-		status = "Missing"
+		row.installed = ""
+	case v.installedChecking:
+		row.installed = "…"
+	case v.installedErr != nil || row.installed == "":
+		if p.Installed {
+			row.installed = versionFailure(v.installedErr)
+		}
+	}
+	if !v.latestChecking && (v.latestErr != nil || row.latest == "") {
+		row.latest = versionFailure(v.latestErr)
+	}
+	switch {
+	case !p.Installed && !p.Partial:
+		row.state = stateMissing
 	case p.Partial:
-		status, style = "Incomplete", termui.StyleError
+		row.state = stateIncomplete
 	case v.installedChecking || v.latestChecking:
-		status = "Checking"
+		row.state = stateChecking
 	case v.installedErr != nil || v.latestErr != nil:
-		status = "Unknown"
+		row.state = stateCheckFailed
 	default:
 		if comparison, ok := compareVersions(v.installed, v.latest); ok {
 			switch comparison {
 			case -1:
-				status, style = "Update available", termui.StyleAccent
+				row.state = stateUpdate
 			case 0:
-				status, style = "Current", termui.StyleSuccess
+				row.state = stateCurrent
 			case 1:
-				status, style = "Newer than target", termui.StyleMuted
+				row.state = stateAhead
 			}
 		}
 	}
-	return
-}
-
-func (d *dashboardModel) versionDetail(p PackageStatus) string {
-	v := d.versions[p.Name]
-	installed, latest, channel, status, _ := d.versionCells(p)
-	parts := []string{fmt.Sprintf("Installed: %s | Latest %s: %s | %s", installed, channel, latest, status)}
-	if v.installedErr != nil {
-		parts = append(parts, "installed check: "+v.installedErr.Error())
-	}
-	if v.latestErr != nil {
-		parts = append(parts, "latest check: "+v.latestErr.Error())
-	}
-	if status == "Newer than target" {
-		parts = append(parts, "Different target: installed version is newer than the requested "+channel+" release")
-	}
-	return strings.Join(parts, " | ")
-}
-
-func versionColumn(value string, width int) string {
-	value = termui.Sanitize(value)
-	if utf8.RuneCountInString(value) <= width {
-		return value
-	}
-	return string([]rune(value)[:width-1]) + "…"
+	return row
 }

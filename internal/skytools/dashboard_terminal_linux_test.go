@@ -40,31 +40,38 @@ chmod +x "$HOME/.local/bin/uv"
 printf 'uv fixture installation finished\n'
 `)
 	pty := startDashboardTerminal(t, m)
-	pty.waitFor(0, "developer packages", 3*time.Second)
+	pty.waitFor(0, "skytools pty-test", 3*time.Second)
 
 	// Exercise the small-screen branch, then restore a screen large enough for
 	// the complete list and live installer output before navigating controls.
 	checkpoint := pty.output.Len()
 	pty.resize(32, 8)
-	pty.waitFor(checkpoint, "Enlarge terminal", 3*time.Second)
+	pty.waitFor(checkpoint, "Terminal too small", 3*time.Second)
 	checkpoint = pty.output.Len()
 	pty.resize(120, 32)
-	pty.waitFor(checkpoint, "Install missing", 3*time.Second)
+	pty.waitFor(checkpoint, "PACKAGE", 3*time.Second)
 
 	pty.selectUVAndRun()
 	pty.waitFor(0, "uv fixture download progress", 3*time.Second)
 	if err := os.WriteFile(m.at("uv-fixture-continue"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	pty.waitFor(0, "Operation completed.", 3*time.Second)
-	pty.waitFor(0, "uv             Installed", 3*time.Second)
+	pty.waitFor(0, "Done", 3*time.Second)
+	checkpoint = pty.output.Len()
+	pty.send("\r")
+	pty.waitFor(checkpoint, "0.0.1", 3*time.Second)
 	if !executable(m.at(".local/bin/uv")) {
 		t.Fatal("completed dashboard operation did not create executable uv")
 	}
 	if _, err := os.Stat(m.at("uv-was-executed")); !os.IsNotExist(err) {
 		t.Fatalf("inventory rescan executed the installed uv fixture: %v", err)
 	}
-	pty.quitAndCheckRestore()
+	receipt := pty.quitAndCheckRestore()
+	for _, want := range []string{"skytools: installed uv", `eval "$(skytools env)"`} {
+		if !strings.Contains(receipt, want) {
+			t.Fatalf("receipt missing %q: %q", want, receipt)
+		}
+	}
 	if got := requests.Load(); got != 1 {
 		t.Fatalf("installer HTTP requests = %d, want exactly one fixture request", got)
 	}
@@ -81,13 +88,13 @@ printf '#!/bin/sh\nexit 0\n' > "$HOME/.local/bin/uv"
 chmod +x "$HOME/.local/bin/uv"
 `)
 	pty := startDashboardTerminal(t, m)
-	pty.waitFor(0, "developer packages", 3*time.Second)
+	pty.waitFor(0, "skytools pty-test", 3*time.Second)
 	pty.selectUVAndRun()
 	pty.waitFor(0, "uv fixture waiting for cancellation", 3*time.Second)
 	checkpoint := pty.output.Len()
 	started := time.Now()
 	pty.send("\x03")
-	pty.waitFor(checkpoint, "Operation cancelled.", 2*time.Second)
+	pty.waitFor(checkpoint, "Cancelled", 2*time.Second)
 	if elapsed := time.Since(started); elapsed >= 2*time.Second {
 		t.Fatalf("installer cancellation took %s; process group was not stopped promptly", elapsed)
 	}
@@ -97,12 +104,14 @@ chmod +x "$HOME/.local/bin/uv"
 	if state := m.scan(m.tools())[0]; state.Name != "uv" || state.Installed || state.Partial {
 		t.Fatalf("cancelled uv inventory = %+v, want missing", state)
 	}
-	// Cancellation leaves the dashboard alive and keyboard-driven: Refresh is
+	// Cancellation leaves the dashboard alive and keyboard-driven: Rescan is
 	// handled by the normal UI before q exits and restores the original screen.
 	checkpoint = pty.output.Len()
-	pty.send("r")
-	pty.waitFor(checkpoint, "Local package inventory refreshed.", 3*time.Second)
-	pty.quitAndCheckRestore()
+	pty.send("\rr")
+	pty.waitFor(checkpoint, "Rescanned local files.", 3*time.Second)
+	if receipt := pty.quitAndCheckRestore(); !strings.Contains(receipt, "cancelled during uv") {
+		t.Fatalf("receipt = %q", receipt)
+	}
 	if got := requests.Load(); got != 1 {
 		t.Fatalf("installer HTTP requests = %d, want exactly one fixture request", got)
 	}
@@ -135,11 +144,13 @@ func TestDashboardTerminalLoadsVersionsAfterFirstFrameAndQuitsWhileChecking(t *t
 	pty.waitFor(0, "go1.25.0", time.Second)
 	pty.waitFor(0, "checking", time.Second)
 	pty.send("r")
-	pty.waitFor(0, "Local package inventory refreshed.", time.Second)
+	pty.waitFor(0, "Rescanned local files.", time.Second)
 	close(gate)
 	pty.waitFor(0, "1.26.2", time.Second)
-	pty.waitFor(0, "Update available", time.Second)
-	pty.quitAndCheckRestore()
+	pty.waitFor(0, "update", time.Second)
+	if receipt := pty.quitAndCheckRestore(); receipt != "" {
+		t.Fatalf("browsing printed a receipt: %q", receipt)
+	}
 }
 
 func TestDashboardTerminalQuitCancelsPendingVersionChecks(t *testing.T) {
@@ -149,8 +160,28 @@ func TestDashboardTerminalQuitCancelsPendingVersionChecks(t *testing.T) {
 		return ReleaseInfo{}, ctx.Err()
 	}}
 	pty := startDashboardTerminalWithProbes(t, m, probes)
-	pty.waitFor(0, "developer packages", time.Second)
-	pty.quitAndCheckRestore()
+	pty.waitFor(0, "skytools pty-test", time.Second)
+	if receipt := pty.quitAndCheckRestore(); receipt != "" {
+		t.Fatalf("browsing printed a receipt: %q", receipt)
+	}
+}
+
+func TestDashboardTerminalBlockedPlanPrintsTheCommandOnQuit(t *testing.T) {
+	m, requests := dashboardTerminalManager(t, "#!/bin/sh\nexit 99\n")
+	m.systemProvider = packageProviderFunc(func(context.Context, []SystemDependency) (SystemDependencyReport, error) {
+		return SystemDependencyReport{Platform: "fixture", InstallCommand: "sudo apt-get install --no-install-recommends curl", Missing: []MissingSystemDependency{{"http-client", []string{"curl"}, []string{"uv"}}}}, nil
+	})
+	pty := startDashboardTerminal(t, m)
+	pty.waitFor(0, "skytools pty-test", 3*time.Second)
+	pty.send("\r")
+	pty.waitFor(0, "sudo apt-get install --no-install-recommends curl", 3*time.Second)
+	receipt := pty.quitAndCheckRestore()
+	if !strings.Contains(receipt, "sudo apt-get install --no-install-recommends curl") {
+		t.Fatalf("receipt = %q", receipt)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("a blocked plan downloaded an installer %d times", got)
+	}
 }
 
 func dashboardTerminalManager(t *testing.T, installer string) (*manager, *atomic.Int32) {
@@ -280,12 +311,12 @@ func (p *dashboardTerminalPTY) send(keys string) {
 
 func (p *dashboardTerminalPTY) selectUVAndRun() {
 	p.t.Helper()
-	// Initial order is Install, Update, Refresh, then uv. Selecting uv adds
-	// Run after all package rows; four Up keys wrap from uv back onto Run.
+	// The cursor starts on uv. Enter opens Review, which allows the run once its
+	// prerequisite check has finished.
 	checkpoint := p.output.Len()
-	p.send(strings.Repeat("\x1b[B", 3) + " ")
-	p.waitFor(checkpoint, "Selected: uv", 3*time.Second)
-	p.send(strings.Repeat("\x1b[A", 4) + "\r")
+	p.send("\r")
+	p.waitFor(checkpoint, "enter run", 3*time.Second)
+	p.send("\r")
 }
 
 func (p *dashboardTerminalPTY) pump(timeout time.Duration) {
@@ -345,7 +376,8 @@ func (p *dashboardTerminalPTY) waitFor(from int, text string, timeout time.Durat
 	p.t.Fatalf("timed out waiting for %q\noutput: %s", text, termui.Sanitize(p.output.String()))
 }
 
-func (p *dashboardTerminalPTY) quitAndCheckRestore() {
+// quitAndCheckRestore returns what was printed on the normal screen afterwards.
+func (p *dashboardTerminalPTY) quitAndCheckRestore() string {
 	p.t.Helper()
 	p.send("q")
 	deadline := time.Now().Add(2 * time.Second)
@@ -375,9 +407,11 @@ func (p *dashboardTerminalPTY) quitAndCheckRestore() {
 	if strings.Count(output, "\x1b[?1049h") != 1 || strings.Count(output, "\x1b[?25l") != 1 || strings.Count(output, "\x1b[?25h") != 1 || strings.Count(output, "\x1b[?1049l") != 1 {
 		p.t.Fatalf("dashboard did not pair alternate-screen/cursor setup and restoration: %q", output)
 	}
-	if !strings.HasSuffix(output, "\x1b[0m\x1b[?25h\x1b[?1049l") {
+	before, after, restored2 := strings.Cut(output, "\x1b[0m\x1b[?25h\x1b[?1049l")
+	if !restored2 || before == "" {
 		p.t.Fatalf("dashboard exit output did not restore cursor and original screen: %q", output)
 	}
+	return after
 }
 
 func dashboardTerminalIOCTL(fd, request uintptr, value unsafe.Pointer) error {

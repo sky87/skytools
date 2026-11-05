@@ -9,322 +9,529 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/sky87/skytools/internal/termui"
 )
 
-type dashboardAction int
+type dashboardScreen int
 
 const (
-	dashboardInstall dashboardAction = iota
-	dashboardUpdate
+	screenPackages dashboardScreen = iota
+	screenDetails
+	screenReview
+	screenRun
+	screenResult
+	screenLog
+	screenHelp
+	screenPrerequisites
+	screenSelfUpdate
 )
 
-func (a dashboardAction) label() string {
-	switch a {
-	case dashboardUpdate:
-		return "Update"
-	default:
-		return "Install missing"
-	}
+// dashboardCommand is what a key asks the event loop to do beyond changing the
+// model: everything that starts or stops background work.
+type dashboardCommand int
+
+const (
+	commandNone dashboardCommand = iota
+	commandQuit
+	commandRefresh
+	commandCheckPlan
+	commandCheckAll
+	commandRun
+	commandSelfUpdate
+	commandCancel
+	commandCancelAndQuit
+)
+
+const (
+	filterAll = iota
+	filterUpdates
+	filterMissing
+	filterIssues
+	filterCount
+)
+
+// Below this size the dashboard asks for a larger terminal.
+const (
+	dashboardMinWidth  = 36
+	dashboardMinHeight = 10
+)
+
+type prerequisiteState struct {
+	checking      bool
+	generation    uint64
+	report        SystemDependencyReport
+	err           error
+	offset        int
+	unhookedShell []string
 }
 
-func (a dashboardAction) command() string {
-	if a == dashboardUpdate {
-		return "update"
-	}
-	return "ensure"
+func (s prerequisiteState) blocked() bool {
+	return !s.checking && s.err == nil && len(s.report.Missing) > 0
 }
 
+type selfUpdateState struct {
+	probe, checking bool
+	latest          string
+	err             error
+	executable      string
+	updated         string
+}
+
+// dashboardModel holds all application state. termui retains only keyboard focus.
 type dashboardModel struct {
 	packages          []PackageStatus
 	selected          map[string]bool
-	action            dashboardAction
-	scroll            int
-	message           string
-	failed            bool
-	busy              bool
-	current           string
-	logs              []string
 	versions          map[string]dashboardPackageVersions
 	versionGeneration uint64
+	version, home     string
+	width, height     int
+
+	screen     dashboardScreen
+	filter     int
+	cursor     int
+	cursorName string
+	scroll     int
+	find       string
+	finding    bool
+	toast      string
+	readOnly   string
+
+	detailOffset, helpOffset, selfOffset int
+	logOffset                            int
+	logReturn                            dashboardScreen
+	resultOffset                         int
+
+	planNames []string
+	plan      []planItem
+	check     prerequisiteState
+
+	run          *dashboardRun
+	finished     []finishedStep
+	printMissing bool
+
+	self selfUpdateState
 }
 
 func newDashboardModel(packages []PackageStatus) *dashboardModel {
-	d := &dashboardModel{packages: packages, selected: make(map[string]bool), message: "Choose packages and an action, then Run selected."}
+	d := &dashboardModel{packages: packages, selected: make(map[string]bool), width: 80, height: 24}
 	d.resetVersions()
 	return d
 }
 
-func (d *dashboardModel) eligible(p PackageStatus) bool {
-	if d.action == dashboardUpdate {
-		return p.Installed || p.Partial
-	}
-	return !p.Installed
+func (d *dashboardModel) tooSmall() bool {
+	return d.width < dashboardMinWidth || d.height < dashboardMinHeight
 }
 
-func (d *dashboardModel) reconcile() {
+func (d *dashboardModel) inFilter(p PackageStatus, filter int) bool {
+	state := d.row(p).state
+	switch filter {
+	case filterUpdates:
+		return state == stateUpdate
+	case filterMissing:
+		return state == stateMissing
+	case filterIssues:
+		return state == stateIncomplete || state == stateCheckFailed || state == stateUnknown
+	}
+	return true
+}
+
+func (d *dashboardModel) visible() []PackageStatus {
+	var rows []PackageStatus
+	find := strings.ToLower(d.find)
 	for _, p := range d.packages {
-		if !d.eligible(p) {
-			delete(d.selected, p.Name)
+		if d.inFilter(p, d.filter) && (find == "" || strings.Contains(strings.ToLower(p.Name+" "+p.Label), find)) {
+			rows = append(rows, p)
 		}
 	}
+	return rows
 }
 
-func (d *dashboardModel) setAction(action dashboardAction) {
-	d.action = action
-	d.reconcile()
-}
-
-func (d *dashboardModel) selectAll() {
-	all := true
-	for _, p := range d.packages {
-		if d.eligible(p) && !d.selected[p.Name] {
-			all = false
-		}
+func (d *dashboardModel) focusedPackage() (PackageStatus, bool) {
+	rows := d.visible()
+	if d.cursor < 0 || d.cursor >= len(rows) {
+		return PackageStatus{}, false
 	}
-	for _, p := range d.packages {
-		if d.eligible(p) {
-			d.selected[p.Name] = !all
-		}
-	}
+	return rows[d.cursor], true
 }
 
+// names returns the selection in catalog order.
 func (d *dashboardModel) names() []string {
 	var names []string
 	for _, p := range d.packages {
-		if d.selected[p.Name] && d.eligible(p) {
+		if d.selected[p.Name] {
 			names = append(names, p.Name)
 		}
 	}
 	return names
 }
 
-func (d *dashboardModel) preview() string {
-	names := d.names()
-	if len(names) == 0 {
-		return "No packages selected."
+func (d *dashboardModel) toggleAll(rows []PackageStatus) {
+	all := len(rows) > 0
+	for _, p := range rows {
+		all = all && d.selected[p.Name]
 	}
-	text := "Selected: " + strings.Join(names, ", ")
-	var catalog []tool
+	for _, p := range rows {
+		if all {
+			delete(d.selected, p.Name)
+		} else {
+			d.selected[p.Name] = true
+		}
+	}
+}
+
+func (d *dashboardModel) inTab(filter int) []PackageStatus {
+	var rows []PackageStatus
 	for _, p := range d.packages {
-		catalog = append(catalog, tool{name: p.Name})
-	}
-	resolved, err := selectTools(catalog, strings.Join(names, ","), true)
-	if err == nil {
-		var extra []string
-		for _, t := range resolved {
-			if !d.selected[t.name] {
-				extra = append(extra, t.name)
-			}
-		}
-		if len(extra) > 0 {
-			text = "Also included: " + strings.Join(extra, ", ") + " | " + text
+		if d.inFilter(p, filter) {
+			rows = append(rows, p)
 		}
 	}
-	return text
+	return rows
 }
 
-func packageState(p PackageStatus) string {
-	if p.Partial {
-		return "Incomplete"
-	}
-	if p.Installed {
-		return "Installed"
-	}
-	return "Missing"
+func (d *dashboardModel) setFilter(filter int) {
+	d.filter = (filter + filterCount) % filterCount
+	d.cursor, d.cursorName, d.scroll = 0, "", 0
 }
 
-func packageDetail(p PackageStatus) string {
-	var parts []string
-	if p.Version != "" {
-		parts = append(parts, p.Version)
+func (d *dashboardModel) moveFocus(step int) {
+	if rows := d.visible(); len(rows) > 0 {
+		d.cursor = (d.cursor + step + len(rows)) % len(rows)
+		d.cursorName = rows[d.cursor].Name
+		d.detailOffset = 0
 	}
-	if p.Path != "" {
-		parts = append(parts, p.Path)
-	}
-	if p.Detail != "" {
-		parts = append(parts, p.Detail)
-	}
-	return strings.Join(parts, " | ")
 }
 
-func printInventory(out io.Writer, packages []PackageStatus) {
-	fmt.Fprintln(out, "skytools local package inventory (read-only)")
-	for _, p := range packages {
-		state := strings.ToLower(packageState(p))
-		if !p.Installed && !p.Partial {
-			state = "not installed / unavailable"
-		}
-		detail := packageDetail(p)
-		if p.Origin == "system" {
-			detail = "system PATH | " + detail
-		}
-		fmt.Fprintf(out, "%-12s %-27s %-7s %s\n", termui.Sanitize(p.Name), state, termui.Sanitize(p.Channel), termui.Sanitize(detail))
-	}
-	fmt.Fprintln(out, "Use skytools in an interactive terminal to select packages.")
-	fmt.Fprintln(out, "Or use: skytools ensure --only <names> | skytools update --only <names>")
-	fmt.Fprintln(out, "Use skytools status --versions for explicit version commands.")
+func (d *dashboardModel) openReview(names []string) dashboardCommand {
+	d.planNames = names
+	d.plan = d.buildPlan(names)
+	d.check = prerequisiteState{checking: true, generation: d.check.generation + 1}
+	d.screen = screenReview
+	return commandCheckPlan
 }
 
-// frame declares every control anew, including clipped rows. Only the framework
-// retains focus; package selection, scroll position, and operation state live here.
-func (d *dashboardModel) frame(ui *termui.Context, width, height int, event termui.Event, version string) (run, refresh bool) {
-	ui.BeginFrame(width, height, event)
-	ui.Label(1, 0, "skytools "+version+"  |  developer packages", termui.StyleTitle)
-	installed, incomplete := 0, 0
-	for _, p := range d.packages {
-		if p.Installed {
-			installed++
-		} else if p.Partial {
-			incomplete++
-		}
+func (d *dashboardModel) applyPrerequisites(result prerequisiteResult) {
+	if result.generation != d.check.generation {
+		return
 	}
-	updates, checking := 0, 0
-	for _, p := range d.packages {
-		_, _, _, status, _ := d.versionCells(p)
-		if status == "Update available" {
-			updates++
-		}
-		if d.versions[p.Name].latestChecking {
-			checking++
-		}
-	}
-	ui.Label(1, 1, fmt.Sprintf("%d installed  %d incomplete  %d missing  |  %d updates  %d checking", installed, incomplete, len(d.packages)-installed-incomplete, updates, checking), termui.StyleMuted)
-	if height < 14 || width < 44 {
-		ui.Label(1, 3, "Enlarge terminal to at least 44 x 14.", termui.StyleError)
-		ui.Label(1, 5, "q quit | Ctrl-C cancels an operation", termui.StyleMuted)
-		return false, false
-	}
-	if ui.Button("action-install", 1, 3, "Install missing", !d.busy) {
-		d.setAction(dashboardInstall)
-	}
-	if ui.Button("action-update", 21, 3, "Update", !d.busy) {
-		d.setAction(dashboardUpdate)
-	}
-	if ui.Button("action-refresh", 33, 3, "Refresh", !d.busy) {
-		refresh = true
-	}
-	ui.Label(1, 4, "Action: "+d.action.label()+" | Space toggles a focused package", termui.StyleAccent)
-	if width >= 80 {
-		ui.Label(5, 5, fmt.Sprintf("%-14s %-10s %-11s %-11s %-6s %s", "Package", "State", "Installed", "Latest", "Target", "Update"), termui.StyleMuted)
-	} else {
-		ui.Label(5, 5, fmt.Sprintf("%-10s %-11s %-11s %s", "Package", "Installed", "Latest", ""), termui.StyleMuted)
-	}
-	listTop, listHeight := 6, height-14
-	if listHeight > len(d.packages) {
-		listHeight = len(d.packages)
-	}
-	if listHeight < 1 {
-		listHeight = 1
-	}
-	for i, p := range d.packages {
-		if ui.Focused() == "package-"+p.Name {
-			if i < d.scroll {
-				d.scroll = i
-			} else if i >= d.scroll+listHeight {
-				d.scroll = i - listHeight + 1
-			}
-		}
-	}
-	if d.scroll > len(d.packages)-listHeight {
-		d.scroll = len(d.packages) - listHeight
-	}
-	if d.scroll < 0 {
-		d.scroll = 0
-	}
-	for i, p := range d.packages {
-		value := d.selected[p.Name]
-		name := p.Name
-		current, latest, channel, status, style := d.versionCells(p)
-		label := fmt.Sprintf("%-14s %-10s %-11s %-11s %-6s %s", versionColumn(name, 14), packageState(p), versionColumn(current, 11), versionColumn(latest, 11), channel, status)
-		if width < 80 {
-			marker := ""
-			if status == "Update available" {
-				marker = "UPD"
-			}
-			label = fmt.Sprintf("%-10s %-11s %-11s %s", versionColumn(name, 10), versionColumn(current, 11), versionColumn(latest, 11), marker)
-		}
-		row := listTop + i - d.scroll
-		if i < d.scroll || i >= d.scroll+listHeight {
-			row = -1
-		}
-		if !d.eligible(p) && !d.busy {
-			ui.FocusableLabel("package-"+p.Name, 1, row, "[-] "+label, termui.StyleMuted)
-		} else if ui.Checkbox("package-"+p.Name, 1, row, label, &value, !d.busy && d.eligible(p)) {
-			d.selected[p.Name] = value
-		}
-		if width >= 80 {
-			ui.Label(43, row, fmt.Sprintf("%-11s", versionColumn(latest, 11)), style)
-			ui.Label(62, row, status, style)
-		} else if status == "Update available" {
-			ui.Label(40, row, "UPD", style)
-		}
-	}
-	bottom := listTop + listHeight
-	ui.Label(1, bottom, fmt.Sprintf("Packages %d-%d of %d  |  %s", d.scroll+1, d.scroll+listHeight, len(d.packages), d.preview()), termui.StyleAccent)
-	detail := "Focus a package to see its local version and path."
-	for _, p := range d.packages {
-		if ui.Focused() == "package-"+p.Name {
-			detail = d.versionDetail(p) + " | " + packageDetail(p)
-			if dependencies := packageRequirements[p.Name].Tools; len(dependencies) > 0 {
-				detail = "Requires: " + strings.Join(dependencies, ", ") + " | " + detail
-			}
-			if detail == "" {
-				detail = p.Label + ": no local version or path available."
-			}
-		}
-	}
-	ui.Label(1, bottom+1, detail, termui.StyleMuted)
-	systemUpdate := false
-	if d.action == dashboardUpdate {
-		for _, p := range d.packages {
-			if d.selected[p.Name] && p.Origin == "system" {
-				systemUpdate = true
-			}
-		}
-	}
-	if systemUpdate {
-		ui.Label(1, bottom+2, "Updates install a newer copy in your home.", termui.StyleAccent)
-	} else {
-		ui.Label(1, bottom+2, "Install keeps existing versions. Updates use LTS/stable channels.", termui.StyleMuted)
-	}
-	if ui.Button("run", 1, bottom+3, "Run selected", !d.busy && len(d.names()) > 0) {
-		run = true
-	}
-	status, style := d.message, termui.StyleSuccess
-	if d.failed {
-		style = termui.StyleError
-	}
-	if d.busy {
-		status, style = "Running "+d.action.label()+": "+d.current+" | Ctrl-C cancel; q cancel and quit", termui.StyleAccent
-	}
-	ui.Label(1, bottom+4, status, style)
-	logRows := height - (bottom + 6)
-	if logRows > 3 {
-		logRows = 3
-	}
-	start := len(d.logs) - logRows
-	if start < 0 {
-		start = 0
-	}
-	for i := start; i < len(d.logs); i++ {
-		ui.Label(1, bottom+5+i-start, d.logs[i], termui.StyleMuted)
-	}
-	ui.Label(1, height-1, "Tab/arrows move | Space select | i/u action | a all | r scan | q quit", termui.StyleMuted)
-	return run, refresh
+	d.check.checking, d.check.report, d.check.err = false, result.report, result.err
 }
 
-const dashboardLogLines = 120
+// update handles every key except list movement, which belongs to termui's List
+// and Scroll controls during the frame.
+func (d *dashboardModel) update(event termui.Event) dashboardCommand {
+	if event.Key == termui.KeyNone || event.Key == termui.KeyResize {
+		return commandNone
+	}
+	d.toast = ""
+	key := keyRune(event)
+	if d.tooSmall() {
+		switch {
+		case d.screen == screenRun:
+			if event.Key == termui.KeyCtrlC {
+				return commandCancel
+			}
+		case event.Key == termui.KeyCtrlC || key == 'q':
+			return commandQuit
+		}
+		return commandNone
+	}
+	switch d.screen {
+	case screenPackages:
+		return d.updatePackages(event, key)
+	case screenDetails:
+		return d.updateDetails(event, key)
+	case screenReview:
+		return d.updateReview(event, key)
+	case screenRun:
+		return d.updateRun(event, key)
+	case screenResult:
+		return d.updateResult(event, key)
+	case screenLog:
+		if event.Key == termui.KeyCtrlC {
+			return commandQuit
+		}
+		if event.Key == termui.KeyEscape || event.Key == termui.KeyLeft || key == 'q' {
+			d.screen = d.logReturn
+		}
+	case screenHelp:
+		if event.Key == termui.KeyCtrlC {
+			return commandQuit
+		}
+		if !isScrollKey(event) {
+			d.screen = screenPackages
+		}
+	case screenPrerequisites:
+		switch {
+		case event.Key == termui.KeyCtrlC:
+			return commandQuit
+		case event.Key == termui.KeyEscape, event.Key == termui.KeyLeft:
+			d.screen = screenPackages
+		case key == 'r':
+			d.check = prerequisiteState{checking: true, generation: d.check.generation + 1}
+			return commandCheckAll
+		case key == 'q':
+			d.printMissing = d.check.blocked()
+			return commandQuit
+		}
+	case screenSelfUpdate:
+		switch {
+		case event.Key == termui.KeyCtrlC:
+			return commandQuit
+		case event.Key == termui.KeyEscape, event.Key == termui.KeyLeft, key == 'q':
+			d.screen = screenPackages
+		case event.Key == termui.KeyEnter:
+			return commandSelfUpdate
+		}
+	}
+	return commandNone
+}
+
+func keyRune(event termui.Event) rune {
+	if event.Key != termui.KeyRune {
+		return 0
+	}
+	return unicode.ToLower(event.Rune)
+}
+
+func isScrollKey(event termui.Event) bool {
+	switch event.Key {
+	case termui.KeyUp, termui.KeyDown, termui.KeyPageUp, termui.KeyPageDown, termui.KeyHome, termui.KeyEnd:
+		return true
+	case termui.KeyRune:
+		return event.Rune == 'j' || event.Rune == 'k' || event.Rune == 'g' || event.Rune == 'G'
+	}
+	return false
+}
+
+func (d *dashboardModel) updatePackages(event termui.Event, key rune) dashboardCommand {
+	if event.Key == termui.KeyCtrlC {
+		return commandQuit
+	}
+	if d.finding {
+		switch event.Key {
+		case termui.KeyEscape:
+			d.finding, d.find = false, ""
+		case termui.KeyEnter:
+			d.finding = false
+		case termui.KeyBackspace:
+			if runes := []rune(d.find); len(runes) > 0 {
+				d.find = string(runes[:len(runes)-1])
+			}
+		case termui.KeyRune:
+			d.find += string(event.Rune)
+		}
+		return commandNone
+	}
+	focused, hasFocus := d.focusedPackage()
+	switch event.Key {
+	case termui.KeyTab:
+		d.setFilter(d.filter + 1)
+	case termui.KeyBackTab:
+		d.setFilter(d.filter - 1)
+	case termui.KeyRight:
+		if hasFocus {
+			d.screen, d.detailOffset = screenDetails, 0
+		}
+	case termui.KeyEscape:
+		if d.find != "" {
+			d.find = ""
+		} else {
+			clear(d.selected)
+		}
+	case termui.KeySpace:
+		if d.readOnly == "" && hasFocus {
+			if d.selected[focused.Name] {
+				delete(d.selected, focused.Name)
+			} else {
+				d.selected[focused.Name] = true
+			}
+		}
+	case termui.KeyEnter:
+		if d.readOnly != "" {
+			return commandNone
+		}
+		if names := d.names(); len(names) > 0 {
+			return d.openReview(names)
+		}
+		if !hasFocus {
+			return commandNone
+		}
+		switch d.row(focused).state {
+		case stateCurrent:
+			d.toast = focused.Name + " is current. Space selects it for a forced update."
+		case stateAhead:
+			d.toast = focused.Name + " is ahead of its target. Space selects it to install the target."
+		default:
+			return d.openReview([]string{focused.Name})
+		}
+	}
+	switch key {
+	case 'q':
+		return commandQuit
+	case 'r':
+		return commandRefresh
+	case '/':
+		d.finding = true
+	case '?':
+		d.screen, d.helpOffset = screenHelp, 0
+	case 'p':
+		d.screen = screenPrerequisites
+		d.check = prerequisiteState{checking: true, generation: d.check.generation + 1}
+		return commandCheckAll
+	case 's':
+		d.screen, d.selfOffset = screenSelfUpdate, 0
+	case 'l':
+		if d.run != nil && d.run.isFinished() {
+			d.openLog(screenPackages)
+		} else {
+			d.toast = "No run yet, so there is no log."
+		}
+	case 'u', 'm', 'a':
+		if d.readOnly != "" {
+			return commandNone
+		}
+		rows, empty := d.inTab(filterUpdates), "No known updates."
+		if key == 'm' {
+			rows, empty = d.inTab(filterMissing), "Nothing is missing."
+		} else if key == 'a' {
+			rows, empty = d.visible(), "Nothing in this view."
+		}
+		if len(rows) == 0 {
+			d.toast = empty
+		}
+		d.toggleAll(rows)
+	}
+	return commandNone
+}
+
+func (d *dashboardModel) updateDetails(event termui.Event, key rune) dashboardCommand {
+	switch {
+	case event.Key == termui.KeyCtrlC:
+		return commandQuit
+	case event.Key == termui.KeyEscape, event.Key == termui.KeyLeft, key == 'q':
+		d.screen = screenPackages
+	case event.Key == termui.KeyUp, event.Key == termui.KeyRune && event.Rune == 'k':
+		d.moveFocus(-1)
+	case event.Key == termui.KeyDown, event.Key == termui.KeyRune && event.Rune == 'j':
+		d.moveFocus(1)
+	case event.Key == termui.KeyEnter:
+		if focused, ok := d.focusedPackage(); ok && d.readOnly == "" {
+			return d.openReview([]string{focused.Name})
+		}
+	}
+	return commandNone
+}
+
+func (d *dashboardModel) updateReview(event termui.Event, key rune) dashboardCommand {
+	switch {
+	case event.Key == termui.KeyCtrlC:
+		return commandQuit
+	case event.Key == termui.KeyEscape, event.Key == termui.KeyLeft:
+		d.screen = screenPackages
+	case key == 'q':
+		d.printMissing = d.check.blocked()
+		return commandQuit
+	case event.Key == termui.KeyEnter:
+		if d.check.checking {
+			d.toast = "Still checking system prerequisites."
+		} else if d.check.err == nil && !d.check.blocked() {
+			return commandRun
+		}
+	case key == 'r':
+		if !d.check.checking {
+			d.check = prerequisiteState{checking: true, generation: d.check.generation + 1, unhookedShell: d.check.unhookedShell}
+			return commandCheckPlan
+		}
+	case key == 'x':
+		if d.check.blocked() {
+			names := d.namesWithoutBlocked()
+			for _, name := range d.planNames {
+				if !contains(names, name) {
+					delete(d.selected, name)
+				}
+			}
+			if len(names) == 0 {
+				d.screen = screenPackages
+				return commandNone
+			}
+			return d.openReview(names)
+		}
+	}
+	return commandNone
+}
+
+func (d *dashboardModel) updateRun(event termui.Event, key rune) dashboardCommand {
+	run := d.run
+	if run == nil {
+		return commandNone
+	}
+	if event.Key == termui.KeyCtrlC {
+		run.confirmQuit, run.cancelling = false, true
+		return commandCancel
+	}
+	if run.confirmQuit {
+		switch {
+		case key == 'y':
+			run.confirmQuit, run.cancelling = false, true
+			return commandCancelAndQuit
+		case key == 'n', event.Key == termui.KeyEscape:
+			run.confirmQuit = false
+		}
+		return commandNone
+	}
+	if key == 'q' {
+		run.confirmQuit = true
+	}
+	return commandNone
+}
+
+func (d *dashboardModel) updateResult(event termui.Event, key rune) dashboardCommand {
+	switch {
+	case event.Key == termui.KeyCtrlC, key == 'q':
+		return commandQuit
+	case event.Key == termui.KeyEnter, event.Key == termui.KeyEscape:
+		d.screen = screenPackages
+	case key == 'l':
+		d.openLog(screenResult)
+	case key == 'r':
+		if names := d.unfinishedNames(); len(names) > 0 && !d.run.self {
+			d.planNames, d.plan = names, d.buildPlan(names)
+			return commandRun
+		}
+	}
+	return commandNone
+}
+
+func (d *dashboardModel) openLog(back dashboardScreen) {
+	d.screen, d.logReturn = screenLog, back
+	d.logOffset = len(d.run.log) // Clamped to the last page while drawing.
+}
+
+func (d *dashboardModel) refresh(packages []PackageStatus) {
+	d.packages = packages
+	d.resetVersions()
+	d.toast = "Rescanned local files. Checking versions again."
+}
+
+// Each line is capped because installers can print progress with no newline. The
+// number of lines is not capped, so a cause early in a noisy run stays readable.
 const dashboardLogLineBytes = 4096
 
-// dashboardLog is a bounded, concurrent writer shared by stdout and stderr.
-// Escape sequences are removed only after complete chunks have been joined.
+type loggedStepEvent struct {
+	stepEvent
+	line int
+}
+
+// dashboardLog is a concurrent writer shared by stdout and stderr. Escape
+// sequences are removed only after complete chunks have been joined.
 type dashboardLog struct {
 	mu      sync.Mutex
 	lines   []string
 	partial string
-	current string
+	events  []loggedStepEvent
 }
 
 func (l *dashboardLog) Write(data []byte) (int, error) {
@@ -339,10 +546,6 @@ func (l *dashboardLog) Write(data []byte) (int, error) {
 		}
 		if complete {
 			l.lines = append(l.lines, termui.Sanitize(l.partial))
-			if len(l.lines) > dashboardLogLines {
-				copy(l.lines, l.lines[len(l.lines)-dashboardLogLines:])
-				l.lines = l.lines[:dashboardLogLines]
-			}
 			l.partial = ""
 		}
 	}
@@ -352,23 +555,24 @@ func (l *dashboardLog) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-func (l *dashboardLog) setCurrent(name string) {
+func (l *dashboardLog) report(event stepEvent) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.current = name
+	l.events = append(l.events, loggedStepEvent{event, len(l.lines)})
 }
 
-func (l *dashboardLog) snapshot() (string, []string) {
+// drain returns only what is new, so a long log costs nothing per frame.
+func (l *dashboardLog) drain(from int) (lines []string, partial string, events []loggedStepEvent) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	lines := append([]string{}, l.lines...)
-	if l.partial != "" {
-		lines = append(lines, termui.Sanitize(l.partial))
+	if from < len(l.lines) {
+		lines = append(lines, l.lines[from:]...)
 	}
-	return termui.Sanitize(l.current), lines
+	events, l.events = l.events, nil
+	return lines, termui.Sanitize(l.partial), events
 }
 
-type dashboardRunner func(context.Context, io.Writer, func(string)) error
+type dashboardRunner func(context.Context, io.Writer, func(stepEvent)) error
 
 type dashboardJob struct {
 	cancel context.CancelFunc
@@ -378,10 +582,10 @@ type dashboardJob struct {
 
 func startDashboardJob(ctx context.Context, runner dashboardRunner) *dashboardJob {
 	jobCtx, cancel := context.WithCancel(ctx)
-	job := &dashboardJob{cancel: cancel, done: make(chan error, 1), log: &dashboardLog{current: "waiting for installation lock"}}
+	job := &dashboardJob{cancel: cancel, done: make(chan error, 1), log: &dashboardLog{}}
 	go func() {
 		defer cancel()
-		err := runner(jobCtx, job.log, job.log.setCurrent)
+		err := runner(jobCtx, job.log, job.log.report)
 		if jobCtx.Err() != nil {
 			err = jobCtx.Err()
 		}
@@ -390,44 +594,45 @@ func startDashboardJob(ctx context.Context, runner dashboardRunner) *dashboardJo
 	return job
 }
 
-func (m *manager) dashboardRunner(action dashboardAction, names []string) dashboardRunner {
-	// Copy manager fields, then construct closures bound to that copy. Installers
-	// must never borrow the UI manager's context or output writers.
-	return func(ctx context.Context, output io.Writer, started func(string)) error {
+// Copy manager fields, then construct closures bound to that copy. Installers
+// must never borrow the UI manager's context or output writers.
+func (m *manager) dashboardRunner(plan []planItem) dashboardRunner {
+	return func(ctx context.Context, output io.Writer, report func(stepEvent)) error {
 		worker := *m
 		worker.ctx, worker.out, worker.errOut = ctx, output, output
 		worker.env = append([]string{}, m.env...)
-		selected, err := selectTools(worker.tools(), strings.Join(names, ","), true)
+		steps, err := planSteps(worker.tools(), plan)
 		if err != nil {
 			return err
 		}
-		return worker.perform(action.command(), selected, func(event stepEvent) {
-			if event.Phase == stepStarted {
-				started(event.Label)
-			}
-		})
+		return worker.performPlan(steps, report)
 	}
 }
 
-func (d *dashboardModel) complete(err error, packages []PackageStatus) {
-	d.busy = false
-	d.packages = packages
-	d.reconcile()
-	d.failed = err != nil && !errors.Is(err, context.Canceled)
-	switch {
-	case errors.Is(err, context.Canceled):
-		d.message = "Operation cancelled. Local package inventory refreshed."
-	case err != nil:
-		d.message = "Failed: " + termui.Sanitize(err.Error())
-	default:
-		d.message = "Operation completed. Local package inventory refreshed."
+func (m *manager) selfUpdateRunner(current, path string) dashboardRunner {
+	return func(ctx context.Context, output io.Writer, _ func(stepEvent)) error {
+		worker := *m
+		worker.ctx, worker.out, worker.errOut = ctx, output, output
+		worker.env = append([]string{}, m.env...)
+		return worker.selfUpdate(current, path)
 	}
 }
 
-func (d *dashboardModel) refresh(packages []PackageStatus) {
-	d.packages = packages
-	d.reconcile()
-	d.message, d.failed = "Local package inventory refreshed.", false
+// readOnlyReason finds out on open what would otherwise fail only after Run.
+func (m *manager) readOnlyReason() string {
+	if err := m.platform(); err != nil {
+		return "Install and Update are not available on this platform. Browsing works."
+	}
+	if _, err := m.systemPackageProvider(); err != nil {
+		return "Install and Update need Debian-family Linux. Browsing works."
+	}
+	return ""
+}
+
+type prerequisiteResult struct {
+	generation uint64
+	report     SystemDependencyReport
+	err        error
 }
 
 func (m *manager) dashboard(version string, input *os.File, output io.Writer) (result error) {
@@ -445,14 +650,27 @@ func (m *manager) dashboardWithVersions(version string, input *os.File, output i
 	if err != nil {
 		return err
 	}
+	var d *dashboardModel
+	// Deferred first so it runs last: the receipt must reach the normal screen,
+	// after the alternate screen is gone and the terminal modes are restored.
+	defer func() {
+		if d != nil {
+			for _, line := range d.receipt() {
+				fmt.Fprintln(output, line)
+			}
+		}
+	}()
 	defer func() {
 		if err := terminal.Close(); result == nil {
 			result = err
 		}
 	}()
-	d := newDashboardModel(packages)
+	d = newDashboardModel(packages)
+	d.version, d.home, d.readOnly = version, m.home, m.readOnlyReason()
+	d.self.probe = probes.self != nil
+	d.self.checking = d.self.probe
 	var ui termui.Context
-	ui.Focus("action-install")
+	ui.SetDisplay(termui.DisplayFromEnv(os.Getenv))
 	var job *dashboardJob
 	var checker *dashboardVersionCheck
 	var retired []*dashboardVersionCheck
@@ -464,7 +682,25 @@ func (m *manager) dashboardWithVersions(version string, input *os.File, output i
 			checker = nil
 		}
 	}
+	prerequisiteCtx, cancelPrerequisites := context.WithCancel(m.ctx)
+	prerequisites := make(chan prerequisiteResult, 1)
+	var prerequisiteChecks sync.WaitGroup
+	checkPrerequisites := func(generation uint64, steps []planStep) {
+		prerequisiteChecks.Add(1)
+		go func() {
+			defer prerequisiteChecks.Done()
+			worker := *m
+			worker.ctx, worker.out, worker.errOut = prerequisiteCtx, io.Discard, io.Discard
+			report, err := worker.checkPlanDependencies(steps)
+			select {
+			case prerequisites <- prerequisiteResult{generation, report, err}:
+			case <-prerequisiteCtx.Done():
+			}
+		}()
+	}
 	defer func() {
+		cancelPrerequisites()
+		prerequisiteChecks.Wait()
 		stopCheck()
 		for _, check := range retired {
 			check.cancel()
@@ -472,15 +708,10 @@ func (m *manager) dashboardWithVersions(version string, input *os.File, output i
 		}
 		if job != nil {
 			job.cancel()
-			<-job.done
+			jobErr := <-job.done
+			d.completeRun(job, jobErr, m.scan(m.tools()))
 		}
 	}()
-	refresh := func() {
-		stopCheck()
-		d.refresh(m.scan(m.tools()))
-		d.resetVersions()
-		restartCheck = true
-	}
 	event := termui.Event{}
 	quitting := false
 	for {
@@ -507,14 +738,17 @@ func (m *manager) dashboardWithVersions(version string, input *os.File, output i
 			}
 		}
 	versionsDrained:
+		select {
+		case update := <-prerequisites:
+			d.applyPrerequisites(update)
+		default:
+		}
 		if job != nil {
-			d.current, d.logs = job.log.snapshot()
+			d.syncRun(job)
 			select {
-			case err := <-job.done:
-				d.current, d.logs = job.log.snapshot()
+			case jobErr := <-job.done:
+				d.completeRun(job, jobErr, m.scan(m.tools()))
 				job = nil
-				d.complete(err, m.scan(m.tools()))
-				d.resetVersions()
 				restartCheck = true
 				if quitting {
 					return nil
@@ -522,58 +756,62 @@ func (m *manager) dashboardWithVersions(version string, input *os.File, output i
 			default:
 			}
 		}
-		if event.Key == termui.KeyCtrlC {
-			if job != nil {
-				job.cancel()
-				d.current = "cancelling..."
-			} else {
-				return nil
-			}
-		}
-		if event.Key == termui.KeyRune {
-			switch event.Rune {
-			case 'q', 'Q':
-				if job == nil {
-					return nil
-				}
-				job.cancel()
-				quitting = true
-			case 'a', 'A':
-				if job == nil {
-					d.selectAll()
-				}
-			case 'i', 'I':
-				if job == nil {
-					d.setAction(dashboardInstall)
-				}
-			case 'u', 'U':
-				if job == nil {
-					d.setAction(dashboardUpdate)
-				}
-			case 'r', 'R':
-				if job == nil {
-					refresh()
-				}
-			}
-		}
 		width, height := terminal.Size()
-		run, rescan := d.frame(&ui, width, height, event, version)
-		if rescan {
-			refresh()
-		}
-		if run && job == nil {
+		d.width, d.height = width, height
+		switch d.update(event) {
+		case commandQuit:
+			return nil
+		case commandRefresh:
+			stopCheck()
+			d.refresh(m.scan(m.tools()))
+			restartCheck = true
+		case commandCheckPlan:
+			d.check.unhookedShell = m.profilesWithoutHook()
+			steps, err := planSteps(m.tools(), d.plan)
+			if err != nil {
+				d.applyPrerequisites(prerequisiteResult{generation: d.check.generation, err: err})
+			} else {
+				checkPrerequisites(d.check.generation, steps)
+			}
+		case commandCheckAll:
+			var steps []planStep
+			for _, t := range m.tools() {
+				steps = append(steps, planStep{t, "update"})
+			}
+			checkPrerequisites(d.check.generation, steps)
+		case commandRun:
 			stopCheck()
 			restartCheck = false
-			d.busy, d.failed, d.logs = true, false, nil
-			job = startDashboardJob(m.ctx, m.dashboardRunner(d.action, d.names()))
+			d.beginPlanRun()
+			job = startDashboardJob(m.ctx, m.dashboardRunner(d.plan))
+		case commandSelfUpdate:
+			path, err := os.Executable()
+			if err != nil {
+				d.toast = "Cannot find the skytools executable: " + err.Error()
+				break
+			}
+			stopCheck()
+			restartCheck = false
+			d.beginSelfUpdateRun(path)
+			job = startDashboardJob(m.ctx, m.selfUpdateRunner(version, path))
+		case commandCancel:
+			if job != nil {
+				job.cancel()
+			}
+		case commandCancelAndQuit:
+			if job != nil {
+				job.cancel()
+				quitting = true
+			}
 		}
+		d.frame(&ui, width, height, event)
 		if err := terminal.Present(ui.EndFrame()); err != nil {
 			return err
 		}
 		// The first local screen is presented before any upstream request or
 		// executable version query is started.
 		if restartCheck && job == nil {
-			checker = startDashboardVersions(m.ctx, d.versionGeneration, append([]PackageStatus{}, d.packages...), probes)
+			checker = startDashboardVersionTasks(m.ctx, d.versionGeneration, d.pendingVersionTasks(), probes)
 			restartCheck = false
 		}
 		event, err = terminal.Poll(m.ctx, 75*time.Millisecond)

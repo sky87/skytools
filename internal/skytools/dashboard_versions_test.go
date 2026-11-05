@@ -18,22 +18,19 @@ func TestDashboardVersionsShowCurrentLatestAndUpdatesAt80Columns(t *testing.T) {
 		d.applyVersion(dashboardVersionResult{generation: d.versionGeneration, name: name, release: ReleaseInfo{Version: version, Channel: d.versions[name].channel}})
 	}
 	d.applyVersion(dashboardVersionResult{generation: d.versionGeneration, name: "uv", err: errors.New("offline")})
-	_, latest, _, status, _ := d.versionCells(d.packages[0])
-	if latest != "1.26.2" || status != "Update available" {
-		t.Fatalf("%s %s", latest, status)
+	if row := d.row(d.packages[0]); row.latest != "1.26.2" || row.state != stateUpdate {
+		t.Fatalf("%+v", row)
 	}
-	_, _, _, status, _ = d.versionCells(d.packages[1])
-	if status != "Newer than target" {
-		t.Fatal(status)
+	if row := d.row(d.packages[1]); row.state != stateAhead {
+		t.Fatalf("%+v", row)
 	}
-	_, _, _, status, _ = d.versionCells(d.packages[2])
-	if status != "Unknown" {
-		t.Fatal(status)
+	if row := d.row(d.packages[2]); row.state != stateCheckFailed {
+		t.Fatalf("%+v", row)
 	}
 	var ui termui.Context
-	d.frame(&ui, 80, 24, termui.Event{}, "test")
+	d.frame(&ui, 80, 24, termui.Event{})
 	frame := ui.EndFrame().Text()
-	for _, text := range []string{"Installed", "Latest", "go1.25.0", "1.26.2", "Update available", "4.14.4", "Newer than target"} {
+	for _, text := range []string{"go1.25.0", "1.26.2", "↑ update", "4.14.4", "» ahead", "? check failed"} {
 		if !strings.Contains(frame, text) {
 			t.Errorf("missing %q in frame:\n%s", text, frame)
 		}
