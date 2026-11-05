@@ -401,7 +401,11 @@ func (m *manager) dashboardRunner(action dashboardAction, names []string) dashbo
 		if err != nil {
 			return err
 		}
-		return worker.perform(action.command(), selected, started)
+		return worker.perform(action.command(), selected, func(event stepEvent) {
+			if event.Phase == stepStarted {
+				started(event.Label)
+			}
+		})
 	}
 }
 

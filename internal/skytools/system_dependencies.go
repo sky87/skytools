@@ -102,9 +102,37 @@ func dependenciesFor(command string, tools []tool, states []PackageStatus) []Sys
 	return result
 }
 
+// dependenciesForPlan merges each step's requirements, because one plan can mix
+// installing some tools with updating others.
+func dependenciesForPlan(steps []planStep, states []PackageStatus) []SystemDependency {
+	byCapability := map[string][]string{}
+	for i, step := range steps {
+		for _, dep := range dependenciesFor(step.command, []tool{step.tool}, states[i:i+1]) {
+			byCapability[dep.Capability] = append(byCapability[dep.Capability], dep.RequiredBy...)
+		}
+	}
+	var result []SystemDependency
+	for id, names := range byCapability {
+		result = append(result, SystemDependency{id, names})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Capability < result[j].Capability })
+	return result
+}
+
 func (m *manager) checkSystemDependencies(command string, tools []tool) (SystemDependencyReport, error) {
-	deps := dependenciesFor(command, tools, m.scan(tools))
-	deps = configuredSystemDependencies(deps)
+	steps := make([]planStep, len(tools))
+	for i, t := range tools {
+		steps[i] = planStep{t, command}
+	}
+	return m.checkPlanDependencies(steps)
+}
+
+func (m *manager) checkPlanDependencies(steps []planStep) (SystemDependencyReport, error) {
+	tools := make([]tool, len(steps))
+	for i, step := range steps {
+		tools[i] = step.tool
+	}
+	deps := configuredSystemDependencies(dependenciesForPlan(steps, m.scan(tools)))
 	if len(deps) == 0 {
 		return SystemDependencyReport{}, nil
 	}
@@ -181,13 +209,20 @@ func containsWord(text, word string) bool {
 	return false
 }
 
-func (m *manager) preflight(command string, selected []tool) error {
-	report, err := m.checkSystemDependencies(command, selected)
+func (m *manager) preflight(steps []planStep) error {
+	report, err := m.checkPlanDependencies(steps)
 	if err != nil {
 		return fmt.Errorf("check system dependencies: %w", err)
 	}
 	if len(report.Missing) == 0 {
+		if report.Platform != "" {
+			m.log("prerequisites ok (%s)", report.Platform)
+		}
 		return nil
+	}
+	selected := make([]tool, len(steps))
+	for i, step := range steps {
+		selected[i] = step.tool
 	}
 	m.log("missing system packages (%s):", report.Platform)
 	for _, dep := range report.Missing {

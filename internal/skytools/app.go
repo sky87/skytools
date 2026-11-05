@@ -164,63 +164,16 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, version stri
 	return 0
 }
 
-// perform is shared by command-line and dashboard operations. Callers expand
-// dependencies with selectTools before entering this function.
-func (m *manager) perform(command string, selected []tool, started func(string)) error {
-	if err := m.platform(); err != nil {
-		return err
+// perform is shared by the command line and the tests: every tool gets the same
+// command. Callers expand dependencies with selectTools before entering it.
+func (m *manager) perform(command string, selected []tool, report func(stepEvent)) error {
+	var steps []planStep
+	if command != "setup" {
+		for _, t := range selected {
+			steps = append(steps, planStep{t, command})
+		}
 	}
-	return m.withLock(func() error {
-		if err := m.ctx.Err(); err != nil {
-			return err
-		}
-		if command != "setup" {
-			if err := m.preflight(command, selected); err != nil {
-				return err
-			}
-			for _, packageTool := range selected {
-				if err := m.ctx.Err(); err != nil {
-					return err
-				}
-				if started != nil {
-					started(packageTool.label)
-				}
-				start := time.Now()
-				m.log("checking %s", packageTool.label)
-				before := m.scan([]tool{packageTool})
-				if command == "update" || !before[0].Installed {
-					if err := packageTool.ensure(); err != nil {
-						return fmt.Errorf("%s: %w", packageTool.name, err)
-					}
-				}
-				if command == "update" && packageTool.update != nil {
-					m.log("updating %s", packageTool.label)
-					if err := packageTool.update(); err != nil {
-						return fmt.Errorf("%s: %w", packageTool.name, err)
-					}
-				}
-				if err := m.ctx.Err(); err != nil {
-					return err
-				}
-				after := m.scan([]tool{packageTool})[0]
-				if !after.Installed || (command == "update" || !before[0].Installed) && after.Origin != "managed" {
-					return fmt.Errorf("%s: installation is still missing or incomplete", packageTool.name)
-				}
-				m.log("%s is available (%s)", packageTool.label, time.Since(start).Round(time.Second))
-			}
-		}
-		if err := m.ctx.Err(); err != nil {
-			return err
-		}
-		if started != nil {
-			started("shell configuration")
-		}
-		if err := m.setupShell(); err != nil {
-			return err
-		}
-		m.log("shell configured; open a new shell or run: eval \"$(skytools env)\"")
-		return nil
-	})
+	return m.performPlan(steps, report)
 }
 
 type tool struct {
