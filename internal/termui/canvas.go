@@ -16,6 +16,7 @@ type cell struct {
 type canvas struct {
 	width, height int
 	cells         [][]cell
+	display       Display
 }
 
 func newCanvas(width, height int) canvas {
@@ -54,6 +55,11 @@ func (c *canvas) text(x, y int, text string, style Style) {
 		if r == 0xfe0e || r == 0xfe0f {
 			continue
 		}
+		if c.display.ASCII {
+			if r = asciiRune(r); r == 0 {
+				continue
+			}
+		}
 		width := runeWidth(r)
 		if width == 0 {
 			// Combining marks are safe only after a base character drawn by this
@@ -83,8 +89,36 @@ func (c *canvas) text(x, y int, text string, style Style) {
 	}
 }
 
-var styleCodes = [...]string{
-	"\x1b[0m", "\x1b[1;36m", "\x1b[2m", "\x1b[36m", "\x1b[32m", "\x1b[31m", "\x1b[7m", "\x1b[2m",
+func (c *canvas) highlight(y, x0, x1 int, style Style) {
+	if y < 0 || y >= c.height {
+		return
+	}
+	row := c.cells[y]
+	for x := max(0, x0); x < min(x1, len(row)); x++ {
+		if row[x].text == "" && !row[x].cont {
+			row[x].text = " "
+		}
+		row[x].style = style
+	}
+}
+
+// styleCode resets first: attributes such as bold would otherwise carry over
+// into the next run of text.
+func (d Display) styleCode(style Style) string {
+	code := "\x1b[0"
+	if style&attrBold != 0 {
+		code += ";1"
+	}
+	if style&attrDim != 0 {
+		code += ";2"
+	}
+	if style&attrReverse != 0 {
+		code += ";7"
+	}
+	if color := style & colorMask; color != 0 && !d.NoColor {
+		code += ";3" + string(rune('0'+color))
+	}
+	return code + "m"
 }
 
 func (c canvas) frame() Frame {
@@ -100,11 +134,8 @@ func (c canvas) frame() Frame {
 			if pixel.cont {
 				continue
 			}
-			if pixel.style >= Style(len(styleCodes)) {
-				pixel.style = StyleNormal
-			}
 			if style != pixel.style {
-				b.WriteString(styleCodes[pixel.style])
+				b.WriteString(c.display.styleCode(pixel.style))
 				style = pixel.style
 			}
 			if pixel.text == "" {
@@ -116,6 +147,28 @@ func (c canvas) frame() Frame {
 		frame.rows[y] = b.String()
 	}
 	return frame
+}
+
+// asciiGlyphs maps the symbols skytools draws to ASCII of the same width. The
+// spinner frames map onto a turning | / - \\ so animation survives the fallback.
+var asciiGlyphs = map[rune]rune{
+	'→': '>', '·': '|', '…': '~', '─': '-', '│': '|', '✓': '+', '✗': 'x', '↑': '^', '↓': 'v',
+	'●': '*', '›': '>', '○': 'o', '»': '=', '█': '#', '×': 'x', '—': '-',
+	'⠋': '|', '⠙': '/', '⠹': '-', '⠸': '\\', '⠼': '|', '⠴': '/', '⠦': '-', '⠧': '\\', '⠇': '|', '⠏': '/',
+}
+
+// asciiRune returns 0 for marks that have no width of their own.
+func asciiRune(r rune) rune {
+	if r < 0x80 {
+		return r
+	}
+	if replacement, ok := asciiGlyphs[r]; ok {
+		return replacement
+	}
+	if runeWidth(r) == 0 {
+		return 0
+	}
+	return '?'
 }
 
 // sanitize strips complete ANSI instructions, including OSC/DCS payloads, and
@@ -218,6 +271,93 @@ func emojiWide(r rune) bool {
 		r == 0x27b0 || r == 0x27bf || (r >= 0x2b1b && r <= 0x2b1c) ||
 		r == 0x2b50 || r == 0x2b55 || r == 0x1f004 || r == 0x1f0cf || r == 0x1f18e ||
 		(r >= 0x1f191 && r <= 0x1f19a) || (r >= 0x1f1e6 && r <= 0x1f251)
+}
+
+// Width returns the columns text occupies once it is drawn.
+func Width(text string) int {
+	width := 0
+	for _, r := range sanitize(text) {
+		if r != 0xfe0e && r != 0xfe0f {
+			width += runeWidth(r)
+		}
+	}
+	return width
+}
+
+// Truncate fits text in width columns, marking anything removed with an ellipsis.
+func Truncate(text string, width int) string {
+	text = sanitize(text)
+	if Width(text) <= width {
+		return text
+	}
+	if width <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	used := 0
+	for _, r := range text {
+		w := runeWidth(r)
+		if used+w > width-1 {
+			break
+		}
+		b.WriteRune(r)
+		used += w
+	}
+	return b.String() + "…"
+}
+
+// Wrap breaks sanitized text at spaces into lines of at most width columns. A
+// word longer than a line, such as a URL, is split so nothing is ever clipped.
+func Wrap(text string, width int) []string {
+	text = sanitize(text)
+	if width <= 0 {
+		return nil
+	}
+	var lines []string
+	line, used := "", 0
+	flush := func() {
+		lines = append(lines, line)
+		line, used = "", 0
+	}
+	for _, word := range strings.Fields(text) {
+		wordWidth := Width(word)
+		if used > 0 && used+1+wordWidth > width {
+			flush()
+		}
+		if used > 0 {
+			line += " "
+			used++
+		}
+		for wordWidth > width-used {
+			part, partWidth := "", 0
+			for _, r := range word {
+				w := runeWidth(r)
+				if partWidth+w > width-used {
+					break
+				}
+				part += string(r)
+				partWidth += w
+			}
+			if part == "" {
+				if used == 0 {
+					return append(lines, word)
+				}
+				flush()
+				continue
+			}
+			line += part
+			word = word[len(part):]
+			wordWidth -= partWidth
+			used += partWidth
+			flush()
+		}
+		line += word
+		used += wordWidth
+	}
+	if used > 0 || len(lines) == 0 {
+		flush()
+	}
+	return lines
 }
 
 // Sanitize returns safe, single-line terminal text. It strips ANSI escape

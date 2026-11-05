@@ -21,6 +21,11 @@ const (
 	KeyEscape
 	KeyCtrlC
 	KeyResize
+	KeyPageUp
+	KeyPageDown
+	KeyHome
+	KeyEnd
+	KeyBackspace
 )
 
 // Event is either a key press or a terminal size change. Rune is set for KeyRune.
@@ -29,19 +34,60 @@ type Event struct {
 	Rune rune
 }
 
-// Style selects a built-in, terminal-safe text appearance.
+// Style combines one of the 16 basic ANSI colors with text attributes. Basic
+// colors follow the terminal's own theme. Meaning must never rely on color alone:
+// NO_COLOR removes the color and keeps the attributes.
 type Style uint8
 
 const (
-	StyleNormal Style = iota
-	StyleTitle
-	StyleMuted
-	StyleAccent
-	StyleSuccess
-	StyleError
-	StyleFocused
-	StyleDisabled
+	colorMask Style = 0b0111
+
+	colorRed    Style = 1
+	colorGreen  Style = 2
+	colorYellow Style = 3
+	colorCyan   Style = 6
+
+	attrBold    Style = 1 << 3
+	attrDim     Style = 1 << 4
+	attrReverse Style = 1 << 5
 )
+
+const (
+	StyleNormal      Style = 0
+	StyleTitle             = attrBold
+	StyleMuted             = attrDim
+	StyleDisabled          = attrDim
+	StyleFocused           = attrReverse
+	StyleAccent            = colorCyan
+	StyleAccentBold        = colorCyan | attrBold
+	StyleSuccess           = colorGreen
+	StyleSuccessBold       = colorGreen | attrBold
+	StyleWarning           = colorYellow
+	StyleWarningBold       = colorYellow | attrBold
+	StyleError             = colorRed
+	StyleErrorBold         = colorRed | attrBold
+)
+
+// Display describes what the terminal can show. Its zero value is full Unicode
+// and color.
+type Display struct {
+	ASCII   bool // Replace non-ASCII text with same-width ASCII.
+	NoColor bool // Keep bold and reverse, drop colors.
+}
+
+// DisplayFromEnv applies NO_COLOR and the locale rules: LC_ALL, then LC_CTYPE,
+// then LANG. Containers often set none of them, which means the C locale.
+func DisplayFromEnv(getenv func(string) string) Display {
+	display := Display{NoColor: getenv("NO_COLOR") != "", ASCII: true}
+	for _, name := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
+		if value := getenv(name); value != "" {
+			value = strings.ToLower(value)
+			display.ASCII = !strings.Contains(value, "utf-8") && !strings.Contains(value, "utf8")
+			break
+		}
+	}
+	return display
+}
 
 // Frame is a complete screen. Construct it with Context.EndFrame.
 // Width includes the physical final column, which is kept empty to avoid wrapping.
@@ -60,7 +106,11 @@ type Context struct {
 	event    Event
 	consumed bool
 	canvas   canvas
+	display  Display
 }
+
+// SetDisplay applies terminal capabilities to the frames that follow.
+func (c *Context) SetDisplay(display Display) { c.display = display }
 
 // Focus requests a stable widget ID. It can be called before or during a frame.
 func (c *Context) Focus(id string) { c.focused = id }
@@ -74,6 +124,7 @@ func (c *Context) Focused() string { return c.focused }
 // be declared to participate in keyboard navigation.
 func (c *Context) BeginFrame(width, height int, event Event) {
 	c.canvas = newCanvas(width, height)
+	c.canvas.display = c.display
 	c.current = c.current[:0]
 	c.event = event
 	c.consumed = false
@@ -138,6 +189,73 @@ func (c *Context) widget(id string, enabled bool) bool {
 
 func (c *Context) activate(focused bool) bool {
 	if !focused || c.consumed || (c.event.Key != KeySpace && c.event.Key != KeyEnter) {
+		return false
+	}
+	c.consumed = true
+	return true
+}
+
+// Highlight applies style to columns x0 up to x1 of row y, blanks included. Draw
+// a row's text first: this replaces every style in the range, so a focused row
+// reads as one solid bar.
+func (c *Context) Highlight(y, x0, x1 int, style Style) { c.canvas.highlight(y, x0, x1, style) }
+
+// List declares a list as one focus stop. The cursor lives in the application.
+// It wraps on arrows and j/k, stops at the ends on paging, and always stays in
+// range. It returns true when the focused list consumed the frame's event.
+func (c *Context) List(id string, cursor *int, count, page int, enabled bool) bool {
+	focused := c.widget(id, enabled)
+	if count <= 0 {
+		*cursor = 0
+		return false
+	}
+	*cursor = max(0, min(*cursor, count-1))
+	if !focused || c.consumed {
+		return false
+	}
+	switch {
+	case c.event.Key == KeyUp, c.event.Key == KeyRune && c.event.Rune == 'k':
+		*cursor = (*cursor - 1 + count) % count
+	case c.event.Key == KeyDown, c.event.Key == KeyRune && c.event.Rune == 'j':
+		*cursor = (*cursor + 1) % count
+	case c.event.Key == KeyPageUp:
+		*cursor = max(0, *cursor-max(1, page))
+	case c.event.Key == KeyPageDown:
+		*cursor = min(count-1, *cursor+max(1, page))
+	case c.event.Key == KeyHome, c.event.Key == KeyRune && c.event.Rune == 'g':
+		*cursor = 0
+	case c.event.Key == KeyEnd, c.event.Key == KeyRune && c.event.Rune == 'G':
+		*cursor = count - 1
+	default:
+		return false
+	}
+	c.consumed = true
+	return true
+}
+
+// Scroll declares scrollable text as one focus stop. The top line offset lives
+// in the application and is clamped so that the last page stays full.
+func (c *Context) Scroll(id string, offset *int, total, page int, enabled bool) bool {
+	focused := c.widget(id, enabled)
+	limit := max(0, total-max(1, page))
+	*offset = max(0, min(*offset, limit))
+	if !focused || c.consumed {
+		return false
+	}
+	switch {
+	case c.event.Key == KeyUp, c.event.Key == KeyRune && c.event.Rune == 'k':
+		*offset = max(0, *offset-1)
+	case c.event.Key == KeyDown, c.event.Key == KeyRune && c.event.Rune == 'j':
+		*offset = min(limit, *offset+1)
+	case c.event.Key == KeyPageUp:
+		*offset = max(0, *offset-max(1, page))
+	case c.event.Key == KeyPageDown:
+		*offset = min(limit, *offset+max(1, page))
+	case c.event.Key == KeyHome, c.event.Key == KeyRune && c.event.Rune == 'g':
+		*offset = 0
+	case c.event.Key == KeyEnd, c.event.Key == KeyRune && c.event.Rune == 'G':
+		*offset = limit
+	default:
 		return false
 	}
 	c.consumed = true

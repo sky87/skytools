@@ -147,3 +147,176 @@ func TestSanitizeHostileTerminalText(t *testing.T) {
 		}
 	}
 }
+
+func TestListIsOneFocusStopWithApplicationCursor(t *testing.T) {
+	var ui Context
+	cursor := 0
+	step := func(event Event) bool {
+		ui.BeginFrame(40, 10, event)
+		consumed := ui.List("rows", &cursor, 10, 4, true)
+		ui.EndFrame()
+		return consumed
+	}
+	step(Event{})
+	for _, tt := range []struct {
+		event Event
+		want  int
+	}{
+		{Event{Key: KeyUp}, 9}, {Event{Key: KeyDown}, 0}, {Event{Key: KeyRune, Rune: 'j'}, 1}, {Event{Key: KeyRune, Rune: 'k'}, 0},
+		{Event{Key: KeyPageDown}, 4}, {Event{Key: KeyPageUp}, 0}, {Event{Key: KeyPageUp}, 0}, {Event{Key: KeyEnd}, 9},
+		{Event{Key: KeyPageDown}, 9}, {Event{Key: KeyHome}, 0}, {Event{Key: KeyRune, Rune: 'G'}, 9}, {Event{Key: KeyRune, Rune: 'g'}, 0},
+	} {
+		if !step(tt.event) || cursor != tt.want {
+			t.Fatalf("%+v: cursor = %d, want %d", tt.event, cursor, tt.want)
+		}
+		if ui.Focused() != "rows" {
+			t.Fatalf("list lost focus: %q", ui.Focused())
+		}
+	}
+	if step(Event{Key: KeyRune, Rune: 'x'}) {
+		t.Fatal("list consumed an unrelated key")
+	}
+	cursor = 50
+	ui.BeginFrame(40, 10, Event{})
+	ui.List("rows", &cursor, 3, 1, false)
+	ui.EndFrame()
+	if cursor != 2 {
+		t.Fatalf("cursor was not clamped: %d", cursor)
+	}
+}
+
+func TestScrollClampsToLastFullPage(t *testing.T) {
+	var ui Context
+	offset := 0
+	step := func(event Event, total int) {
+		ui.BeginFrame(40, 10, event)
+		ui.Scroll("log", &offset, total, 4, true)
+		ui.EndFrame()
+	}
+	step(Event{}, 10)
+	for _, tt := range []struct {
+		key  Key
+		want int
+	}{{KeyDown, 1}, {KeyEnd, 6}, {KeyDown, 6}, {KeyPageUp, 2}, {KeyUp, 1}, {KeyPageDown, 5}, {KeyHome, 0}, {KeyUp, 0}} {
+		step(Event{Key: tt.key}, 10)
+		if offset != tt.want {
+			t.Fatalf("%v: offset = %d, want %d", tt.key, offset, tt.want)
+		}
+	}
+	offset = 6
+	step(Event{}, 2)
+	if offset != 0 {
+		t.Fatalf("short content kept an offset: %d", offset)
+	}
+}
+
+func TestHighlightMakesASolidBar(t *testing.T) {
+	var ui Context
+	ui.BeginFrame(12, 1, Event{})
+	ui.Label(0, 0, "ab", StyleAccent)
+	ui.Label(4, 0, "cd", StyleError)
+	ui.Highlight(0, 0, 8, StyleFocused)
+	want := "\x1b[0;7mab  cd  "
+	if got := ui.EndFrame().rows[0]; got != want {
+		t.Fatalf("row = %q, want %q", got, want)
+	}
+}
+
+func TestStyleCodesResetAndHonorNoColor(t *testing.T) {
+	var ui Context
+	ui.BeginFrame(20, 1, Event{})
+	ui.Label(0, 0, "a", StyleAccentBold)
+	ui.Label(1, 0, "b", StyleMuted)
+	ui.Label(2, 0, "c", StyleNormal)
+	if got, want := ui.EndFrame().rows[0], "\x1b[0;1;36ma\x1b[0;2mb\x1b[0mc"; got != want {
+		t.Fatalf("color row = %q, want %q", got, want)
+	}
+	ui.SetDisplay(Display{NoColor: true})
+	ui.BeginFrame(20, 1, Event{})
+	ui.Label(0, 0, "a", StyleAccentBold)
+	ui.Label(1, 0, "b", StyleFocused)
+	if got, want := ui.EndFrame().rows[0], "\x1b[0;1ma\x1b[0;7mb"; got != want {
+		t.Fatalf("NO_COLOR row = %q, want %q", got, want)
+	}
+}
+
+func TestDisplayFromEnv(t *testing.T) {
+	for _, tt := range []struct {
+		env   map[string]string
+		ascii bool
+		color bool
+	}{
+		{nil, true, true},
+		{map[string]string{"LANG": "C"}, true, true},
+		{map[string]string{"LANG": "en_US.UTF-8"}, false, true},
+		{map[string]string{"LC_CTYPE": "en_US.utf8", "LANG": "C"}, false, true},
+		{map[string]string{"LC_ALL": "POSIX", "LANG": "en_US.UTF-8"}, true, true},
+		{map[string]string{"LANG": "C.UTF-8", "NO_COLOR": "1"}, false, false},
+		{map[string]string{"LANG": "C.UTF-8", "NO_COLOR": ""}, false, true},
+	} {
+		got := DisplayFromEnv(func(name string) string { return tt.env[name] })
+		if got.ASCII != tt.ascii || got.NoColor == tt.color {
+			t.Errorf("%v: %+v", tt.env, got)
+		}
+	}
+}
+
+func TestASCIIDisplayKeepsColumnsAligned(t *testing.T) {
+	var ui Context
+	ui.SetDisplay(Display{ASCII: true})
+	ui.BeginFrame(30, 3, Event{})
+	ui.Label(0, 0, "› ● 1.0 → 2.0 ↑ ✓ ✗ ○ ─…", StyleNormal)
+	ui.Label(0, 1, "e\u0301 ⠋⠙⠹⠸", StyleNormal)
+	ui.Label(0, 2, "界x", StyleNormal)
+	frame := ui.EndFrame()
+	if got, want := frame.rows[0], "> * 1.0 > 2.0 ^ + x o -~"; got != want {
+		t.Errorf("glyphs = %q, want %q", got, want)
+	}
+	if got, want := frame.rows[1], "e |/-\\"; got != want {
+		t.Errorf("spinner and marks = %q, want %q", got, want)
+	}
+	if got, want := frame.rows[2], "?x"; got != want {
+		t.Errorf("wide rune = %q, want %q", got, want)
+	}
+	for _, row := range frame.rows {
+		for _, r := range row {
+			if r >= utf8.RuneSelf {
+				t.Fatalf("non-ASCII reached the terminal: %q", row)
+			}
+		}
+	}
+}
+
+func TestTruncateAndWrapNeverLoseOrOverflow(t *testing.T) {
+	if got := Truncate("abcdef", 4); got != "abc…" {
+		t.Errorf("Truncate = %q", got)
+	}
+	if got := Truncate("abc", 3); got != "abc" {
+		t.Errorf("Truncate exact = %q", got)
+	}
+	if got := Truncate("界界界", 4); got != "界…" {
+		t.Errorf("Truncate wide = %q", got)
+	}
+	if got := strings.Join(Wrap("one two  three", 7), "|"); got != "one two|three" {
+		t.Errorf("Wrap = %q", got)
+	}
+	url := "https://example.com/" + strings.Repeat("x", 30)
+	lines := Wrap("see "+url+" now", 12)
+	if strings.Join(strings.Fields(strings.Join(lines, " ")), "") != strings.ReplaceAll("see "+url+" now", " ", "") {
+		t.Errorf("Wrap lost text: %q", lines)
+	}
+	for _, line := range lines {
+		if Width(line) > 12 {
+			t.Errorf("Wrap overflowed: %q", line)
+		}
+	}
+	if got := Wrap("界界", 1); len(got) == 0 {
+		t.Error("a rune wider than the line vanished")
+	}
+	if got := Wrap("", 10); len(got) != 1 || got[0] != "" {
+		t.Errorf("empty text = %q", got)
+	}
+	if got := Wrap("a\x1b[31mb", 10); got[0] != "ab" {
+		t.Errorf("Wrap did not sanitize: %q", got)
+	}
+}

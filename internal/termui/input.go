@@ -1,6 +1,9 @@
 package termui
 
-import "unicode/utf8"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // keyDecoder buffers incomplete UTF-8 and escape sequences across reads.
 type keyDecoder struct {
@@ -33,7 +36,7 @@ func (d *keyDecoder) next(flushEscape bool) (Event, bool) {
 					d.pending = nil
 					return Event{Key: KeyEscape}, true
 				}
-				final := d.pending[end]
+				final, params := d.pending[end], string(d.pending[2:end])
 				d.pending = d.pending[end+1:]
 				switch final {
 				case 'A':
@@ -46,6 +49,14 @@ func (d *keyDecoder) next(flushEscape bool) (Event, bool) {
 					return Event{Key: KeyLeft}, true
 				case 'Z':
 					return Event{Key: KeyBackTab}, true
+				case 'H':
+					return Event{Key: KeyHome}, true
+				case 'F':
+					return Event{Key: KeyEnd}, true
+				case '~':
+					if key, ok := tildeKey(params); ok {
+						return Event{Key: key}, true
+					}
 				}
 				continue
 			}
@@ -63,6 +74,8 @@ func (d *keyDecoder) next(flushEscape bool) (Event, bool) {
 			return Event{Key: KeyEnter}, true
 		case ' ':
 			return Event{Key: KeySpace}, true
+		case 0x7f, 0x08:
+			return Event{Key: KeyBackspace}, true
 		}
 		if first < 0x20 || first == 0x7f {
 			continue
@@ -83,4 +96,21 @@ func (d *keyDecoder) next(flushEscape bool) (Event, bool) {
 		}
 	}
 	return Event{}, false
+}
+
+// tildeKey decodes "ESC [ n ~". Terminals differ on Home and End, so both of the
+// common numberings are accepted. Modifiers after a semicolon are ignored.
+func tildeKey(params string) (Key, bool) {
+	number, _, _ := strings.Cut(params, ";")
+	switch number {
+	case "1", "7":
+		return KeyHome, true
+	case "4", "8":
+		return KeyEnd, true
+	case "5":
+		return KeyPageUp, true
+	case "6":
+		return KeyPageDown, true
+	}
+	return KeyNone, false
 }

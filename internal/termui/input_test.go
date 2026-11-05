@@ -56,3 +56,13 @@ func TestDecoderKeysAndEscapeDisambiguation(t *testing.T) {
 		t.Fatalf("valid key after invalid UTF-8 = %+v, %v", event, ok)
 	}
 }
+
+func TestDecoderPagingAndEditingKeys(t *testing.T) {
+	var d keyDecoder
+	d.feed([]byte("\x1b[5~\x1b[6~\x1b[H\x1b[F\x1bOH\x1bOF\x1b[1~\x1b[4~\x1b[7~\x1b[8~\x1b[5;2~\x7f\x08"))
+	for i, key := range []Key{KeyPageUp, KeyPageDown, KeyHome, KeyEnd, KeyHome, KeyEnd, KeyHome, KeyEnd, KeyHome, KeyEnd, KeyPageUp, KeyBackspace, KeyBackspace} {
+		if event, ok := d.next(false); !ok || event.Key != key {
+			t.Fatalf("key %d = %+v, %v, want %v", i, event, ok, key)
+		}
+	}
+}
