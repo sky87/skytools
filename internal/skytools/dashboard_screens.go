@@ -816,7 +816,7 @@ func (d *dashboardModel) frameRun(p painter) {
 		p.right(y, " scrolled, end returns ", termui.StyleMuted)
 	}
 	for i := 0; i < page && run.offset+i < len(lines); i++ {
-		p.put(1, logTop+i, lines[run.offset+i], logStyle(lines[run.offset+i]))
+		p.put(1, logTop+i, termui.Truncate(lines[run.offset+i], p.w-2), logStyle(lines[run.offset+i]))
 	}
 	if run.confirmQuit {
 		x := p.put(1, p.h-1, "Cancel the run and quit? ", termui.StyleWarningBold)
@@ -931,12 +931,45 @@ func (d *dashboardModel) frameResult(p painter) {
 	p.hints(append(hints, [2]string{"l", "full log"}, [2]string{"q", "quit"})...)
 }
 
-func (d *dashboardModel) frameLog(p painter) {
-	lines := make([]textLine, len(d.run.log))
-	for i, text := range d.run.log {
-		lines[i] = line(1, text, logStyle(text))
+// wrapLogLine breaks at the screen edge and keeps the indent. Unlike termui.Wrap
+// it preserves spacing, because installer output is often aligned in columns.
+func wrapLogLine(text string, width int) []string {
+	if termui.Width(text) <= width || width < 8 {
+		return []string{text}
 	}
-	p.header(fmt.Sprintf("Full log · %d lines", len(lines)), "")
+	indent := len(text) - len(strings.TrimLeft(text, " "))
+	if indent > width/2 {
+		indent = 0
+	}
+	continuation := strings.Repeat(" ", indent+2)
+	var lines []string
+	var current strings.Builder
+	used := 0
+	for _, r := range text {
+		w := termui.Width(string(r))
+		if used+w > width {
+			lines = append(lines, current.String())
+			current.Reset()
+			current.WriteString(continuation)
+			used = len(continuation)
+		}
+		current.WriteRune(r)
+		used += w
+	}
+	return append(lines, current.String())
+}
+
+func (d *dashboardModel) frameLog(p painter) {
+	var lines []textLine
+	for _, text := range d.run.log {
+		for _, part := range wrapLogLine(text, p.w-2) {
+			lines = append(lines, line(1, part, logStyle(text)))
+		}
+	}
+	p.header(fmt.Sprintf("Full log · %d lines", len(d.run.log)), "")
+	if d.logFromEnd {
+		d.logOffset, d.logFromEnd = len(lines), false
+	}
 	p.drawLines("log", lines, 2, p.h-1, &d.logOffset)
 	p.hints([2]string{"esc", "back"}, [2]string{"↑↓", "scroll"}, [2]string{"pgup pgdn", "page"})
 }

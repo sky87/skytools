@@ -54,8 +54,20 @@ the JDK's own `release` file rather than skytools marker files.
 
 Declare UI controls every frame with stable IDs and keep application state
 outside widget instances. Restore terminal modes and cursor state on exit and
-cancellation. Run jobs in the background, bound their displayed logs, sanitize
-control sequences, and rescan actual files when jobs finish.
+cancellation. Run jobs in the background, keep every log line of a run in memory
+with each line's length capped, sanitize control sequences, and rescan actual files
+when jobs finish. Print a receipt to the normal screen after restoring the terminal
+when a session changed anything or was blocked.
+
+The dashboard has no modes: a row's state decides its action, and Packages, Review,
+Run, and Result are separate screens. Review shows the whole plan, including
+dependencies and the shell hook, and checks prerequisites before anything starts.
+A dependency the user did not select stays as it is when installed; `update --only`
+keeps updating dependencies. Use only basic ANSI colors, give every state a symbol
+and a word, honor `NO_COLOR`, and keep same-width ASCII for non-UTF-8 locales.
+
+Run external commands in their own session with no controlling terminal, so an
+upstream installer can never prompt or stop on `/dev/tty`.
 
 Model system prerequisites as generic capabilities with platform providers.
 Only the Debian-family provider is implemented initially. Install/Update must

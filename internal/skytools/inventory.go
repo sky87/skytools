@@ -8,44 +8,68 @@ import (
 	"github.com/sky87/skytools/internal/termui"
 )
 
-func packageStateWord(p PackageStatus) string {
-	if p.Partial {
-		return "Incomplete"
+// inventoryState uses the same words as the dashboard. Scripts may rely on them:
+// scripts/check-status.sh looks for "missing" and "incomplete".
+func inventoryState(p PackageStatus) string {
+	switch {
+	case p.Partial:
+		return "incomplete"
+	case p.Installed:
+		return "installed"
 	}
-	if p.Installed {
-		return "Installed"
-	}
-	return "Missing"
+	return "missing"
 }
 
-func packageDetail(p PackageStatus) string {
-	var parts []string
-	if p.Version != "" {
-		parts = append(parts, p.Version)
-	}
-	if p.Path != "" {
-		parts = append(parts, p.Path)
-	}
-	if p.Detail != "" {
-		parts = append(parts, p.Detail)
-	}
-	return strings.Join(parts, " | ")
-}
-
-func printInventory(out io.Writer, packages []PackageStatus) {
-	fmt.Fprintln(out, "skytools local package inventory (read-only)")
+func inventoryCounts(packages []PackageStatus) string {
+	counts := map[string]int{}
 	for _, p := range packages {
-		state := strings.ToLower(packageStateWord(p))
-		if !p.Installed && !p.Partial {
-			state = "not installed / unavailable"
-		}
-		detail := packageDetail(p)
-		if p.Origin == "system" {
-			detail = "system PATH | " + detail
-		}
-		fmt.Fprintf(out, "%-12s %-27s %-7s %s\n", termui.Sanitize(p.Name), state, termui.Sanitize(p.Channel), termui.Sanitize(detail))
+		counts[inventoryState(p)]++
 	}
-	fmt.Fprintln(out, "Use skytools in an interactive terminal to select packages.")
-	fmt.Fprintln(out, "Or use: skytools ensure --only <names> | skytools update --only <names>")
-	fmt.Fprintln(out, "Use skytools status --versions for explicit version commands.")
+	var parts []string
+	for _, state := range []string{"installed", "incomplete", "missing"} {
+		if counts[state] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", counts[state], state))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func inventoryWhere(home string, p PackageStatus) string {
+	where := p.Path
+	if home != "" && (where == home || strings.HasPrefix(where, home+"/")) {
+		where = "~" + strings.TrimPrefix(where, home)
+	}
+	if !p.Installed && !p.Partial {
+		return ""
+	}
+	if p.Origin == "system" && p.Installed {
+		where += " (system PATH)"
+	}
+	if p.Partial {
+		where = strings.TrimSpace(where + " " + p.Detail)
+	} else if _, extra, ok := strings.Cut(p.Detail, " | "); ok {
+		where += " " + extra
+	}
+	return where
+}
+
+// printInventory is the filesystem-only output of status and of a piped skytools.
+// Columns are sized from the data, so a long name cannot push the others out.
+func printInventory(out io.Writer, home string, packages []PackageStatus) {
+	fmt.Fprintln(out, "skytools local package inventory (read-only)")
+	if counts := inventoryCounts(packages); counts != "" {
+		fmt.Fprintln(out, counts)
+	}
+	fmt.Fprintln(out)
+	nameWidth, versionWidth := 0, 0
+	for _, p := range packages {
+		nameWidth = max(nameWidth, termui.Width(p.Name))
+		versionWidth = max(versionWidth, termui.Width(p.Version))
+	}
+	for _, p := range packages {
+		line := fmt.Sprintf("%-*s  %-10s  %-*s  %s", nameWidth, termui.Sanitize(p.Name), inventoryState(p), versionWidth, termui.Sanitize(p.Version), termui.Sanitize(inventoryWhere(home, p)))
+		fmt.Fprintln(out, strings.TrimRight(line, " "))
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Run skytools in a terminal for the dashboard. status --versions asks each tool.")
 }

@@ -13,31 +13,34 @@ import (
 	"time"
 )
 
-const usage = `usage: skytools [command] [--only tool,tool]
+const usage = `skytools sets up and updates developer tools in your home directory.
 
-Without a command, open the interactive package dashboard on a terminal,
-or print a fast, read-only package inventory when output is redirected.
+usage: skytools [command] [--only tool,tool]
 
-Commands:
-  ensure       Install missing tools and configure your shell; keep existing versions
-  update       Ensure tools exist, then update them
-  status       Show a fast, read-only local package inventory
-  deps         Check system prerequisites and show missing Debian packages
-  deps install Install selected tools' system prerequisites (root on Debian)
-  ui           Open the interactive package dashboard
-  list         List tool names accepted by --only
-  env          Print shell environment; use: eval "$(skytools env)"
-  setup        Configure shell startup files without installing tools
-  self-update  Update skytools itself from the latest stable GitHub release
-  version      Show the skytools version
+Interactive
+  skytools             Open the dashboard. Prints the inventory when piped.
+  ui                   Same as no command
 
-Options for ensure, update, status, deps:
-  --only   Comma-separated tool names; default: all (dependencies included)
+Install and update
+  ensure               Install missing tools; keep what is installed
+  update               Ensure, then update to the latest LTS or stable
+  self-update          Update skytools itself from the latest GitHub release
 
-Options for status:
-  --versions  Run managed tools to query their versions (may be slow)
+Inspect
+  status               Local inventory; reads files only
+  status --versions    Also ask each tool for its version (may be slow)
+  list                 Names accepted by --only
+  version              Show the skytools version
 
-Tools install under $HOME. Only explicit deps install changes system packages.
+System and shell
+  deps                 Check the OS packages tools need; changes nothing
+  deps install         Install them (root on Debian)
+  setup                Add the shell hook without installing tools
+  env                  Print shell environment: eval "$(skytools env)"
+
+--only takes a comma-separated list for ensure, update, status and deps, and
+includes dependencies. Tools install under $HOME. Only deps install changes
+system packages.
 `
 
 func Run(ctx context.Context, args []string, out, errOut io.Writer, version string) int {
@@ -63,7 +66,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, version stri
 	switch command {
 	case "ensure", "update", "status", "list", "env", "setup", "ui", "deps", "self-update":
 	default:
-		fmt.Fprint(errOut, usage)
+		fmt.Fprintf(errOut, "skytools: unknown command %q; run skytools --help\n", command)
 		return 2
 	}
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
@@ -114,7 +117,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, version stri
 	}
 	if command == "list" {
 		for _, tool := range tools {
-			fmt.Fprintf(out, "%-12s %s\n", tool.name, tool.label)
+			fmt.Fprintf(out, "%-15s %s\n", tool.name, tool.label)
 		}
 		return 0
 	}
@@ -146,7 +149,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, version stri
 		if versions {
 			m.status(selected)
 		} else {
-			printInventory(out, m.scan(selected))
+			printInventory(out, m.home, m.scan(selected))
 		}
 		return 0
 	}
@@ -215,10 +218,10 @@ func (m *manager) status(tools []tool) {
 				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 					output = "version check timed out"
 				} else {
-					output = "not installed / unavailable"
+					output = "missing"
 				}
 			}
-			fmt.Fprintf(m.out, "%-12s %s\n", v.label, strings.Split(strings.TrimSpace(output), "\n")[0])
+			fmt.Fprintf(m.out, "%-15s %s\n", v.label, strings.Split(strings.TrimSpace(output), "\n")[0])
 		}
 	}
 }

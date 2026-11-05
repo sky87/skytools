@@ -100,6 +100,7 @@ type dashboardModel struct {
 
 	detailOffset, helpOffset, selfOffset int
 	logOffset                            int
+	logFromEnd                           bool
 	logReturn                            dashboardScreen
 	resultOffset                         int
 
@@ -507,7 +508,7 @@ func (d *dashboardModel) updateResult(event termui.Event, key rune) dashboardCom
 
 func (d *dashboardModel) openLog(back dashboardScreen) {
 	d.screen, d.logReturn = screenLog, back
-	d.logOffset = len(d.run.log) // Clamped to the last page while drawing.
+	d.logFromEnd = true
 }
 
 func (d *dashboardModel) refresh(packages []PackageStatus) {
@@ -643,7 +644,7 @@ func (m *manager) dashboardWithVersions(version string, input *os.File, output i
 	packages := m.scan(m.tools())
 	file, ok := output.(*os.File)
 	if !ok || !termui.IsTerminal(input) || !termui.IsTerminal(file) {
-		printInventory(output, packages)
+		printInventory(output, m.home, packages)
 		return nil
 	}
 	terminal, err := termui.Open(input, file)

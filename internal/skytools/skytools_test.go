@@ -31,6 +31,25 @@ func testManager(t *testing.T) *manager {
 	return m
 }
 
+func TestUnknownCommandNamesItself(t *testing.T) {
+	var output, errOutput strings.Builder
+	if code := Run(context.Background(), []string{"instal"}, &output, &errOutput, "test"); code != 2 {
+		t.Fatalf("exit %d", code)
+	}
+	if got := errOutput.String(); got != "skytools: unknown command \"instal\"; run skytools --help\n" {
+		t.Fatalf("stderr = %q", got)
+	}
+	output.Reset()
+	if code := Run(context.Background(), []string{"--help"}, &output, &errOutput, "test"); code != 0 {
+		t.Fatalf("help exit %d", code)
+	}
+	for _, command := range []string{"ensure", "update", "self-update", "status --versions", "list", "version", "deps install", "setup", "env"} {
+		if !strings.Contains(output.String(), command) {
+			t.Errorf("help omits %q", command)
+		}
+	}
+}
+
 func TestCLIValidationAndReadOnlyCommands(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

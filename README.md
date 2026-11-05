@@ -60,31 +60,77 @@ skytools setup                   # configure the shell without installing tools
 eval "$(skytools env)"           # activate the environment in the current shell
 ```
 
-The dashboard shows installed versions alongside the latest upstream LTS (or
-stable version for tools without LTS), with available updates highlighted in cyan.
-It distinguishes missing and incomplete packages. Select an
-Install or Update action, choose packages, then run the selection. Installation
-output stays visible while the keyboard remains responsive, and cancelling an
-operation returns to the dashboard. Without an interactive terminal, running
-`skytools` prints the local inventory and exits without changing anything.
+### Dashboard
 
-Use the arrow keys, Tab, or Shift-Tab to move focus. Space or Enter toggles an
-eligible package; installed rows remain focusable to inspect their version and
-path. `i` selects Install missing, `u` selects Update, `a` selects or clears all
-eligible packages, and `r` refreshes inventory and upstream versions. Focus Run selected and
-press Enter to start. Ctrl-C cancels a running action and returns to the
-dashboard, or quits when idle. `q` quits after cancelling any active action.
+The dashboard goes through one sequence: look, pick, review, run, read the result.
+There are no modes. A row's state decides what happens to it:
+
+| Status | Meaning | Enter does |
+| --- | --- | --- |
+| `↑ update` | A newer LTS or stable version is known | Update |
+| `✓ current` | Matches the target channel | Nothing; Space selects it for a forced update |
+| `○ missing` | Not installed | Install |
+| `! incomplete` | Partly installed | Repair |
+| `? check failed`, `? unknown` | Version check failed or versions cannot be compared; never shown as an update | Update |
+| `» ahead` | Newer than the target channel | Nothing; Space selects it to install the target |
+
+`· system` marks a tool found on PATH. `ensure` keeps it, and Update installs a
+managed copy under your home directory without touching the system one.
+
+Review lists each package's action and everything else a run will do before
+anything changes: dependencies, system prerequisites, and the shell hook. A
+dependency you did not select stays as it is if already installed, so updating
+`pi` leaves `node` alone. `skytools update --only pi` updates both. Missing system
+packages stop the plan here, with the full apt command on screen; `x` drops the
+blocked packages and `q` quits and prints the command. skytools never runs it.
+
+Run shows each package's progress and a scrollable log that keeps every line, in
+memory only. Result separates what finished, failed, and did not start, because a
+run stops at its first failure. After you quit, a short receipt stays on the normal
+screen with what changed, any failure, and the commands to run next. Browsing
+without changing anything prints nothing.
+
+| Key | Action |
+| --- | --- |
+| `↑` `↓` `j` `k`, `PgUp` `PgDn`, `g` `G` | Move, page, first and last |
+| `Tab` `Shift-Tab` | Next or previous view: All, Updates, Missing, Issues |
+| `/` | Filter by name |
+| `Space` | Select or clear this row |
+| `u` `m` `a` | Select all updates, all missing, or everything in the view |
+| `Enter` | Review the selection, or this row |
+| `→` | Details of this row, with errors in full |
+| `r` | Rescan files and check versions again |
+| `p` | System prerequisites for all packages |
+| `S` | Update skytools itself |
+| `l` | Log of the last run |
+| `Esc` | Back, clear the filter, clear the selection |
+| `Ctrl-C` | Cancel a run at once, or quit |
+| `q` | Quit; asks first during a run |
+| `?` | All of the above |
+
+Only basic ANSI colors are used, so the dashboard follows your terminal theme, and
+every state also has a symbol and a word. `NO_COLOR` keeps bold and reverse and
+drops color. If `LC_ALL`, `LC_CTYPE`, and `LANG` do not name UTF-8, symbols become
+ASCII of the same width. The list adds details beside it from 110 columns and needs
+at least 36 x 10. Without an interactive terminal, running `skytools` prints the
+local inventory and exits without changing anything.
+
+On platforms without a prerequisite provider, currently anything but Debian-family
+Linux, the dashboard says so on open and allows browsing and self-update only.
 
 The first dashboard frame uses executable paths, symlinks, and native toolchain
 metadata. This local detection performs no execution or network requests. Once
 the screen is visible, four background workers fill in missing installed versions
-with bounded version commands and fetch current upstream releases. Checks are
-cancellable; offline failures and unknown comparisons never produce update alerts.
-Focus a row for full versions and error details. There is no installation manifest
-or persistent version cache. `status` and redirected output remain local and
-filesystem-only; `status --versions` explicitly queries executables.
-Complete system/PATH installations are recognized too. `ensure` keeps them;
-Update installs a managed copy under your home directory.
+with bounded version commands and fetch current upstream releases, plus the latest
+skytools release. Checks are cancellable; offline failures and unknown comparisons
+never produce update alerts. Finishing a run re-reads only the packages it touched.
+There is no installation manifest or persistent version cache. `status` and
+redirected output remain local and filesystem-only; `status --versions` explicitly
+queries executables. Complete system/PATH installations are recognized too.
+
+`ensure` and `update` print numbered steps with installer output indented, then a
+summary naming what did not start. Upstream installers run with no controlling
+terminal, so one that prompts takes its noninteractive path and cannot stall a run.
 
 `ensure` and `update` serialize changes with a per-home lock. A failed tool
 installation stops the command with an error; rerun it after fixing the cause.

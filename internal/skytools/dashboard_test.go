@@ -50,9 +50,37 @@ func TestDashboardNonTerminalAndFastStatusAreReadOnly(t *testing.T) {
 
 func TestDashboardInventorySanitizesMetadata(t *testing.T) {
 	var output bytes.Buffer
-	printInventory(&output, []PackageStatus{{Name: "uv\x1b[2J", Channel: "stable", Detail: "bad\x1b]52;c;clipboard\a\rmetadata"}})
+	printInventory(&output, "", []PackageStatus{{Name: "uv\x1b[2J", Channel: "stable", Partial: true, Detail: "bad\x1b]52;c;clipboard\a\rmetadata"}})
 	if strings.ContainsAny(output.String(), "\x1b\a\r") || strings.Contains(output.String(), "clipboard") {
 		t.Fatalf("unsafe inventory output: %q", output.String())
+	}
+}
+
+func TestInventoryAlignsColumnsAndUsesOneVocabulary(t *testing.T) {
+	var output bytes.Buffer
+	printInventory(&output, "/home/dev", []PackageStatus{
+		{Name: "uv", Installed: true, Version: "0.9.7", Path: "/home/dev/.local/bin/uv", Origin: "managed", Detail: "Installed in your home"},
+		{Name: "gh", Installed: true, Version: "2.46.0", Path: "/usr/bin/gh", Origin: "system", Detail: "Available on PATH; updates install a managed copy in your home"},
+		{Name: "ocaml", Partial: true, Path: "/home/dev/.local/bin/opam", Detail: "Incomplete installation; repair required"},
+		{Name: "playwright-cli", Detail: "Not installed"},
+	})
+	want := `skytools local package inventory (read-only)
+2 installed, 1 incomplete, 1 missing
+
+uv              installed   0.9.7   ~/.local/bin/uv
+gh              installed   2.46.0  /usr/bin/gh (system PATH)
+ocaml           incomplete          ~/.local/bin/opam Incomplete installation; repair required
+playwright-cli  missing
+
+Run skytools in a terminal for the dashboard. status --versions asks each tool.
+`
+	if output.String() != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", output.String(), want)
+	}
+	output.Reset()
+	printInventory(&output, "", []PackageStatus{{Name: "uv", Installed: true}})
+	if text := output.String(); strings.Contains(text, "missing") || strings.Contains(text, "incomplete") {
+		t.Fatalf("a healthy inventory must not trip check-status.sh:\n%s", text)
 	}
 }
 

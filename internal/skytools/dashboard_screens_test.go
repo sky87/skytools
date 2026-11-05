@@ -524,6 +524,35 @@ func TestFullLogOpensAtTheEndAndKeepsEveryLine(t *testing.T) {
 	}
 }
 
+func TestFullLogWrapsLongLinesAndRunScreenMarksThem(t *testing.T) {
+	const long = "      ==> Installing standalone package to /home/dev/.codex/packages/standalone/releases/0.166.0-aarch64-unknown-linux-gnu"
+	d, job, _ := runningFixture(t)
+	fmt.Fprintln(job.log, long)
+	d.syncRun(job)
+	if frame := drawScreen(d, 80, 24, termui.Event{}); !strings.Contains(frame, "…") {
+		t.Errorf("run screen cut a line without marking it:\n%s", frame)
+	}
+	d.completeRun(job, nil, d.packages)
+	press(d, runeKey('l'))
+	frame := drawScreen(d, 80, 24, termui.Event{})
+	joined := strings.Join(strings.Fields(frame), "")
+	if !strings.Contains(joined, strings.ReplaceAll(long, " ", "")) {
+		t.Fatalf("full log lost text:\n%s", frame)
+	}
+	lines := wrapLogLine(long, 40)
+	if len(lines) < 2 || !strings.HasPrefix(lines[1], "        ") {
+		t.Fatalf("continuation lost its indent: %q", lines)
+	}
+	for _, part := range lines {
+		if termui.Width(part) > 40 {
+			t.Fatalf("overflowed: %q", part)
+		}
+	}
+	if got := wrapLogLine("a  b", 40); len(got) != 1 || got[0] != "a  b" {
+		t.Fatalf("short line changed: %q", got)
+	}
+}
+
 func TestReceiptIsEmptyAfterOnlyBrowsing(t *testing.T) {
 	if receipt := screenFixture().receipt(); len(receipt) != 0 {
 		t.Fatalf("receipt = %v", receipt)
