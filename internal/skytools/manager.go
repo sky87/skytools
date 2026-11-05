@@ -39,6 +39,7 @@ func newManager(ctx context.Context, out, errOut io.Writer) (*manager, error) {
 		"FZF_HOME": m.at(".fzf"), "OPAMROOT": m.at(".opam"), "ELAN_HOME": m.at(".elan"),
 		"PNPM_HOME": m.at(".local/share/pnpm"), "UV_INSTALL_DIR": m.at(".local/bin"),
 		"UV_NO_MODIFY_PATH": "1", "DOTNET_CLI_TELEMETRY_OPTOUT": "1", "PROFILE": "/dev/null",
+		"CODEX_NON_INTERACTIVE":       "1",
 		"RUSTUP_INIT_SKIP_PATH_CHECK": "yes",
 	} {
 		m.env = setEnv(m.env, key, value)
@@ -106,8 +107,11 @@ func (m *manager) command(ctx context.Context, args ...string) (*exec.Cmd, error
 	}
 	cmd := exec.CommandContext(ctx, name, args[1:]...)
 	cmd.Env, cmd.Dir = m.commandEnvironment(), m.home
-	// Kill the entire process group on cancellation, including installer children.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// A new session has no controlling terminal, so an upstream installer that
+	// prompts through /dev/tty takes its noninteractive path rather than stopping
+	// on SIGTTIN. The session leader also leads a process group, which lets
+	// cancellation kill the installer's children too.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 3 * time.Second
 	return cmd, nil
