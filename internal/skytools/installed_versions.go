@@ -42,7 +42,7 @@ func (m *manager) installedVersion(ctx context.Context, p PackageStatus) (string
 			binary, _ = m.lookup("ocaml")
 		}
 		args = []string{"-version"}
-	case "go":
+	case "go", "tailscale":
 		args = []string{"version"}
 	case "jdk":
 		args = []string{"-version"}

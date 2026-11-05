@@ -33,7 +33,7 @@ func populateInventory(t testing.TB, m *manager) {
 		".local/bin/uv", ".cargo/bin/rustup", ".cargo/bin/rustc", ".cargo/bin/cargo", ".rustup/toolchains/stable-test/bin/rustc", ".rustup/toolchains/stable-test/bin/cargo",
 		".nvm/versions/node/v24.14.0/bin/node", ".nvm/versions/node/v24.14.0/bin/npm", ".nvm/versions/node/v24.14.0/bin/pnpm", ".bun/bin/bun", ".dotnet/dotnet", ".go/current/bin/go", ".jdk/current/bin/java", ".jdk/current/bin/javac",
 		".fzf/bin/fzf", ".local/bin/gh", ".local/bin/opam", ".opam/default/bin/ocaml", ".opam/default/bin/ocamlc", ".elan/bin/elan", ".elan/bin/lean", ".elan/toolchains/leanprover--lean4---v4.25.0/bin/lean",
-		".local/bin/claude", ".local/bin/codex", ".opencode/bin/opencode", ".local/share/pnpm/pi", ".local/bin/btop",
+		".local/bin/claude", ".local/bin/codex", ".opencode/bin/opencode", ".local/share/pnpm/pi", ".local/bin/btop", ".local/bin/tailscale", ".local/bin/tailscaled",
 	} {
 		inventoryExe(t, m, name)
 	}
@@ -77,7 +77,7 @@ func TestInventoryIsOfflineReadOnlyAndDoesNotExecuteTools(t *testing.T) {
 	populateInventory(t, m)
 	before := inventorySnapshot(t, m.home)
 	statuses := m.scan(m.tools())
-	if len(statuses) != 18 {
+	if len(statuses) != 19 {
 		t.Fatalf("got %d packages", len(statuses))
 	}
 	for _, s := range statuses {

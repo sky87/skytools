@@ -72,6 +72,7 @@ var packageRequirements = map[string]toolRequirements{
 	"opencode":       {Install: []string{"certificates", "http-client", "bash", "tar", "gzip", "unzip"}},
 	"pi":             {Tools: []string{"node"}, Install: []string{"certificates"}},
 	"btop":           {Install: []string{"certificates"}, Runtime: []string{"terminfo"}},
+	"tailscale":      {Install: []string{"certificates"}},
 	"playwright":     {Tools: []string{"node"}, Install: []string{"certificates"}, Runtime: []string{"playwright-browsers"}},
 	"playwright-cli": {Tools: []string{"playwright"}, Install: []string{"certificates"}, Runtime: []string{"playwright-browsers"}},
 }

@@ -87,7 +87,9 @@ packages over the shared fallback. Keep inventory filesystem-only, including
 native browser revisions and completion markers. Preserve existing user and
 project browser configuration; do not install agent skills automatically.
 btop uses its checksummed official Linux
-release binary in `~/.local/bin/btop`.
+release binary in `~/.local/bin/btop`. Tailscale uses its checksummed official
+Linux binaries in `~/.local/bin`; never start `tailscaled`, install a service, or
+log in on the user's behalf.
 
 ## Development and validation
 

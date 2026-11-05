@@ -161,6 +161,8 @@ func (m *manager) managedStatus(name string) PackageStatus {
 		paths = []string{".local/bin/gh"}
 	case "btop":
 		paths = []string{".local/bin/btop"}
+	case "tailscale":
+		paths = []string{".local/bin/tailscale", ".local/bin/tailscaled"}
 	case "claude":
 		paths = []string{".local/bin/claude"}
 	case "codex":
@@ -324,7 +326,7 @@ func (m *manager) systemStatus(name string) PackageStatus {
 	commands := map[string][]string{
 		"uv": {"uv"}, "rust": {"rustc", "cargo"}, "node": {"node", "npm", "pnpm"},
 		"bun": {"bun"}, "dotnet": {"dotnet"}, "go": {"go"}, "jdk": {"java", "javac"},
-		"fzf": {"fzf"}, "gh": {"gh"}, "btop": {"btop"}, "ocaml": {"opam", "ocaml", "ocamlc"},
+		"fzf": {"fzf"}, "gh": {"gh"}, "btop": {"btop"}, "tailscale": {"tailscale"}, "ocaml": {"opam", "ocaml", "ocamlc"},
 		"lean": {"lean"}, "claude": {"claude"}, "codex": {"codex"}, "opencode": {"opencode"}, "pi": {"pi"},
 	}[name]
 	s := PackageStatus{Origin: "system"}

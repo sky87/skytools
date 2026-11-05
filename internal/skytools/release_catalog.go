@@ -212,6 +212,11 @@ func (m *manager) lookupLatestVersion(name string) (ReleaseInfo, error) {
 			var release githubRelease
 			err = m.metadataJSON(info.SourceURL, &release)
 			info.Version = cleanVersion(release.Tag)
+		case "tailscale":
+			info.SourceURL = tailscalePackages + "?mode=json"
+			var index tailscaleIndex
+			err = m.metadataJSON(info.SourceURL, &index)
+			info.Version = index.TarballsVersion
 		case "opencode", "pi", "playwright", "playwright-cli":
 			pkg := "opencode-ai"
 			if name == "pi" {

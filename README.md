@@ -142,7 +142,7 @@ permissions are preserved, and equal/newer versions are kept. The next invocatio
 uses the new binary. The executable's directory must be writable. For an image-owned
 `/usr/local/bin/skytools`, rebuild the container image or use a user-owned copy.
 This command changes only skytools; it does not update managed tools or shell files.
-Release archives for Go, Corretto, GitHub CLI, and btop are checked against upstream
+Release archives for Go, Corretto, GitHub CLI, btop, and Tailscale are checked against upstream
 SHA-256 checksums, extracted in staging directories, and activated after validation.
 Other tools use their upstream installers or package managers over HTTPS.
 
@@ -177,8 +177,25 @@ old name. When downloading the binary yourself, an optional equivalent is
 | `opencode` | OpenCode | `~/.opencode/bin` |
 | `pi` | pi coding agent | `~/.local/share/pnpm` |
 | `btop` | btop resource monitor, latest stable Linux binary | `~/.local/bin/btop` |
+| `tailscale` | Tailscale client and daemon, latest stable Linux binaries | `~/.local/bin/tailscale`, `~/.local/bin/tailscaled` |
 | `playwright` | Playwright and playwright-core Node libraries, Chromium, Firefox, WebKit | `~/.local/share/skytools/playwright`, `~/.cache/ms-playwright` |
 | `playwright-cli` | Microsoft's browser automation CLI for coding agents | same shared prefix; `~/.local/bin/playwright-cli` |
+
+skytools only installs the Tailscale binaries. It never starts `tailscaled`, sets
+up a service, or logs you in, because the daemon normally needs root. To run it
+without root, use userspace networking, then log in through the same socket:
+
+```sh
+tailscaled --tun=userspace-networking \
+  --socket="$HOME/.local/state/tailscale/tailscaled.sock" \
+  --statedir="$HOME/.local/state/tailscale" &
+tailscale --socket="$HOME/.local/state/tailscale/tailscaled.sock" up
+```
+
+Userspace networking has no TUN device, so other programs reach the tailnet only
+through Tailscale's SOCKS5 or HTTP proxy options. A `tailscale` client already on
+PATH counts as installed; `tailscaled` is not checked there because system packages
+put it in `/usr/sbin`. Tailscale installation is Linux only.
 
 Python versions can be installed with `uv python install` after setup. Operating
 system packages from the old devcontainer (editors, C/C++ compilers, LaTeX,

@@ -64,6 +64,12 @@ func (m *manager) tools() []tool {
 		{"opencode", "OpenCode", missing(".opencode/bin/opencode", opencode), opencode, []versionCommand{version("opencode", ".opencode/bin/opencode", "--version")}},
 		{"pi", "pi coding agent", m.ensurePi, command("pnpm", "add", "--global", "--ignore-scripts", "@earendil-works/pi-coding-agent@latest"), []versionCommand{{"pi", []string{"pi", "--version"}}}},
 		{"btop", "btop resource monitor", missing(".local/bin/btop", m.installBtop), m.installBtop, []versionCommand{version("btop", ".local/bin/btop", "--version")}},
+		{"tailscale", "Tailscale client and daemon", func() error {
+			if m.managedStatus("tailscale").Installed {
+				return nil
+			}
+			return m.installTailscale()
+		}, m.installTailscale, []versionCommand{version("tailscale", ".local/bin/tailscale", "version")}},
 		{"playwright", "Playwright Node library / browsers", func() error { return m.installPlaywright("playwright", false) }, func() error { return m.installPlaywright("playwright", true) }, []versionCommand{version("playwright", ".local/bin/playwright", "--version")}},
 		{"playwright-cli", "Playwright browser automation for agents", func() error { return m.installPlaywright("playwright-cli", false) }, func() error { return m.installPlaywright("playwright-cli", true) }, []versionCommand{version("playwright-cli", ".local/bin/playwright-cli", "--version")}},
 	}

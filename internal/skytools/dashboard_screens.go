@@ -293,6 +293,17 @@ func (d *dashboardModel) inspector(pkg PackageStatus) (string, string, termui.St
 	return first, second, style
 }
 
+// compactInspector drops the label, which the row's name mostly repeats, and the
+// path when the action already names it.
+func (d *dashboardModel) compactInspector(pkg PackageStatus) (string, termui.Style) {
+	_, second, style := d.inspector(pkg)
+	path := d.shorten(pkg.Path)
+	if path != "" && !strings.Contains(second, path) {
+		return pkg.Name + " · " + path + " · " + second, style
+	}
+	return pkg.Name + " · " + second, style
+}
+
 func (d *dashboardModel) checkedSummary() (text string, style termui.Style, busy bool) {
 	total, pending, failed := len(d.packages), 0, 0
 	for _, p := range d.packages {
@@ -367,15 +378,19 @@ func (d *dashboardModel) framePackages(p painter) {
 		}
 		top = 3
 	}
-	showInspector := !wide && p.h >= 16
-	footer := 2
-	if showInspector {
-		footer = 4
+	rows := d.visible()
+	inspectorRows := 0
+	if !wide && p.h >= 16 {
+		inspectorRows = 2
+		// Seeing every package beats a second line of detail for one of them.
+		if len(rows) == p.h-top-3 {
+			inspectorRows = 1
+		}
 	}
+	footer := 2 + inspectorRows
 	listHeight := max(1, p.h-top-footer)
 	// The cursor follows its package even if background checks change the rows
 	// of a filtered view.
-	rows := d.visible()
 	for i, row := range rows {
 		if row.Name == d.cursorName {
 			d.cursor = i
@@ -409,13 +424,16 @@ func (d *dashboardModel) framePackages(p painter) {
 	ruleY := p.h - footer
 	p.rule(ruleY)
 	d.drawStatusRule(p, ruleY, listHeight, len(rows))
-	if showInspector {
-		first, second, style := "", "", termui.StyleMuted
-		if hasFocus {
-			first, second, style = d.inspector(focused)
+	if hasFocus {
+		switch inspectorRows {
+		case 2:
+			first, second, style := d.inspector(focused)
+			p.put(1, ruleY+1, termui.Truncate(first, p.w-2), termui.StyleNormal)
+			p.put(1, ruleY+2, termui.Truncate(second, p.w-2), style)
+		case 1:
+			text, style := d.compactInspector(focused)
+			p.put(1, ruleY+1, termui.Truncate(text, p.w-2), style)
 		}
-		p.put(1, ruleY+1, termui.Truncate(first, p.w-2), termui.StyleNormal)
-		p.put(1, ruleY+2, termui.Truncate(second, p.w-2), style)
 	}
 	switch {
 	case d.finding:

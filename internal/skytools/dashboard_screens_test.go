@@ -118,6 +118,29 @@ func TestPackagesScreenFitsEverySizeWithoutOverflow(t *testing.T) {
 	}
 }
 
+func TestWholeCatalogFitsAt80By24(t *testing.T) {
+	m := testManager(t)
+	d := newDashboardModel(m.scan(m.tools()))
+	d.version = "test"
+	frame := drawScreen(d, 80, 24, termui.Event{})
+	for _, p := range d.packages {
+		if !strings.Contains(frame, p.Name) {
+			t.Errorf("%s is not visible at 80x24:\n%s", p.Name, frame)
+		}
+	}
+	if !strings.Contains(frame, "uv · Not installed.") {
+		t.Errorf("inspector missing:\n%s", frame)
+	}
+	rows := append(screenFixture().packages, PackageStatus{Name: "tailscale", Channel: "stable", Installed: true, Path: "/home/dev/.local/bin/tailscale", Origin: "managed"})
+	d = newDashboardModel(rows)
+	d.home = "/home/dev"
+	d.applyVersion(dashboardVersionResult{generation: d.versionGeneration, name: "uv", release: ReleaseInfo{Version: "2.0.0"}})
+	d.cursorName = "tailscale"
+	if frame := drawScreen(d, 80, 24, termui.Event{}); !strings.Contains(frame, "tailscale · ~/.local/bin/tailscale · ") {
+		t.Errorf("compact inspector lost the path:\n%s", frame)
+	}
+}
+
 func TestEveryWidthCanSeeHowToQuitAndGetHelp(t *testing.T) {
 	for _, width := range []int{36, 40, 54, 56, 60, 72, 80, 88, 120} {
 		frame := drawScreen(screenFixture(), width, 24, termui.Event{})
