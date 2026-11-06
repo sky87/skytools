@@ -28,6 +28,9 @@ func testManager(t *testing.T) *manager {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The test container runs as root; never let a test pick the path that
+	// runs apt-get directly.
+	m.euid = func() int { return 1000 }
 	return m
 }
 

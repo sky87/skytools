@@ -33,7 +33,9 @@ func (m *manager) tools() []tool {
 	dotnet := install("https://dot.net/v1/dotnet-install.sh", "bash", "--install-dir", m.at(".dotnet"), "--channel", "LTS", "--no-path")
 	codex := install("https://chatgpt.com/codex/install.sh", "sh", "--release", "latest")
 	claude := install("https://claude.ai/install.sh", "bash", "latest")
-	opencode := install("https://opencode.ai/install", "bash", "--no-modify-path")
+	// opencode.ai/install only installs OpenCode 1 and refuses 2.x; v2/install
+	// is the official OpenCode 2 installer, into the same ~/.opencode/bin.
+	opencode := install("https://opencode.ai/v2/install", "bash", "--no-modify-path")
 	return []tool{
 		{"uv", "uv (Python manager)", missing(".local/bin/uv", install("https://astral.sh/uv/install.sh", "sh")), command(m.at(".local/bin/uv"), "self", "update"), []versionCommand{version("uv", ".local/bin/uv", "--version")}},
 		{"rust", "Rust / rustup", m.ensureRust, m.updateRust, []versionCommand{version("rust", ".cargo/bin/rustc", "--version"), version("rustup", ".cargo/bin/rustup", "--version")}},

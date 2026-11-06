@@ -81,8 +81,14 @@ Review lists each package's action and everything else a run will do before
 anything changes: dependencies, system prerequisites, and the shell hook. A
 dependency you did not select stays as it is if already installed, so updating
 `pi` leaves `node` alone. `skytools update --only pi` updates both. Missing system
-packages stop the plan here, with the full apt command on screen; `x` drops the
-blocked packages and `q` quits and prints the command. skytools never runs it.
+packages stop the plan here, with the apt commands on screen. `i` runs them for
+you: the dashboard steps aside and runs `sudo apt-get update` and
+`sudo apt-get install --no-install-recommends ...` in your normal terminal, so sudo
+can ask for your password and apt can ask its usual questions. Ctrl-C there stops
+only sudo or apt. Then the dashboard comes back and checks again. As root it runs
+apt-get without sudo, and without either it only shows the command. `x` drops the
+blocked packages and `q` quits and prints the command. Nothing runs with sudo
+unless you press `i`.
 
 Run shows each package's progress and a scrollable log that keeps every line, in
 memory only. Result separates what finished, failed, and did not start, because a
@@ -131,6 +137,8 @@ queries executables. Complete system/PATH installations are recognized too.
 `ensure` and `update` print numbered steps with installer output indented, then a
 summary naming what did not start. Upstream installers run with no controlling
 terminal, so one that prompts takes its noninteractive path and cannot stall a run.
+`ensure` and `update` never run sudo; they print the apt command when system
+packages are missing.
 
 `ensure` and `update` serialize changes with a per-home lock. A failed tool
 installation stops the command with an error; rerun it after fixing the cause.
@@ -174,7 +182,7 @@ old name. When downloading the binary yourself, an optional equivalent is
 | `lean` | elan, Lean 4 stable | `~/.elan` |
 | `claude` | Claude Code | `~/.local/bin/claude` |
 | `codex` | Codex | `~/.local/bin/codex` |
-| `opencode` | OpenCode | `~/.opencode/bin` |
+| `opencode` | OpenCode 2, via its official v2 installer | `~/.opencode/bin` |
 | `pi` | pi coding agent | `~/.local/share/pnpm` |
 | `btop` | btop resource monitor, latest stable Linux binary | `~/.local/bin/btop` |
 | `tailscale` | Tailscale client and daemon, latest stable Linux binaries | `~/.local/bin/tailscale`, `~/.local/bin/tailscaled` |
@@ -200,7 +208,8 @@ put it in `/usr/sbin`. Tailscale installation is Linux only.
 Python versions can be installed with `uv python install` after setup. Operating
 system packages from the old devcontainer (editors, C/C++ compilers, LaTeX,
 document tools, native libraries) remain OS prerequisites rather than managed
-home installations. skytools never invokes `sudo`. Only the explicit
+home installations. skytools invokes `sudo` only when you press `i` on the
+dashboard's list of missing system packages. Otherwise only the explicit
 `deps install` command invokes the platform's system package manager.
 
 ## Browser automation
@@ -269,7 +278,10 @@ Upstream native metadata, rather than skytools marker files, identifies the
 installed JDK. Claude Code uses its documented
 [latest channel](https://code.claude.com/docs/en/setup), the newest release,
 rather than the older `stable` channel. Codex uses its latest release channel,
-which excludes alpha prereleases.
+which excludes alpha prereleases. OpenCode uses its official OpenCode 2 installer
+(`opencode.ai/v2/install`) and the version endpoint that installer reads; the
+older `opencode.ai/install` only installs OpenCode 1. Updating an OpenCode 1
+installation replaces it with OpenCode 2 in the same `~/.opencode/bin`.
 
 OCaml's latest release comes from the same
 [official release metadata](https://github.com/ocaml/ocaml.org/tree/main/data/releases)

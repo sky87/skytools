@@ -214,11 +214,21 @@ func (m *manager) lookupLatestVersion(name string) (ReleaseInfo, error) {
 			var index tailscaleIndex
 			err = m.metadataJSON(info.SourceURL, &index)
 			info.Version = index.TarballsVersion
-		case "opencode", "pi", "playwright", "playwright-cli":
-			pkg := "opencode-ai"
-			if name == "pi" {
-				pkg = "@earendil-works/pi-coding-agent"
+		case "opencode":
+			// The endpoint the official OpenCode 2 installer resolves its version from.
+			info.SourceURL = "https://opencode.ai/update/api/latest/cli/npm"
+			var latest struct {
+				Channel, Version string
+				Active           bool
 			}
+			if err = m.metadataJSON(info.SourceURL, &latest); err == nil {
+				if latest.Channel != "latest" || !latest.Active || !releaseVersion.MatchString(latest.Version) {
+					err = fmt.Errorf("OpenCode reports no active latest release")
+				}
+				info.Version = latest.Version
+			}
+		case "pi", "playwright", "playwright-cli":
+			pkg := "@earendil-works/pi-coding-agent"
 			if name == "playwright" {
 				pkg = "playwright"
 			}

@@ -22,8 +22,11 @@ from Bash to Go. Keep that source repository unchanged unless asked otherwise.
 
 Preserve the `ensure` (no updates), `update` (explicit updates), and `status`
 commands and existing home locations when changing the manager. Tools must run
-as the target user; never invoke sudo. Only the explicit `deps install` command
-may install OS packages, using the platform provider (root required on Debian).
+as the target user; never invoke sudo, with one exception: the dashboard may run
+the platform provider's install commands, through sudo unless already root, after
+the user presses `i` on a screen that shows those exact commands. Otherwise only
+the explicit `deps install` command may install OS packages, using the platform
+provider (root required on Debian).
 Explain OS prerequisites in README.md. Avoid overwriting user dotfiles and keep
 shell configuration idempotent. Verify upstream SHA-256 checksums where available;
 stage archive installs before changing active pointers. Keep Linux amd64/arm64
@@ -68,13 +71,16 @@ keeps updating dependencies. Use only basic ANSI colors, give every state a symb
 and a word, honor `NO_COLOR`, and keep same-width ASCII for non-UTF-8 locales.
 
 Run external commands in their own session with no controlling terminal, so an
-upstream installer can never prompt or stop on `/dev/tty`.
+upstream installer can never prompt or stop on `/dev/tty`. The only exception is
+that user-confirmed sudo step: the dashboard leaves the screen and gives sudo the
+terminal's foreground, so it can ask for a password and Ctrl-C reaches only it,
+then takes the terminal back and checks prerequisites again.
 
 Model system prerequisites as generic capabilities with platform providers.
 Only the Debian-family provider is implemented initially. Install/Update must
 check all selected tools' prerequisites before starting installers, accepting only
 installed native/all-architecture dpkg packages. Report missing packages and an
-apt command; never run it automatically. Keep `deps` read-only; `deps install` is
+apt command; never run it without that explicit keypress. Keep `deps` read-only; `deps install` is
 the explicit opt-in installation path. Declare tool dependencies in code and
 resolve their transitive closure before checking or installing prerequisites.
 Include automatic tool dependencies such as Node for pi and Playwright.

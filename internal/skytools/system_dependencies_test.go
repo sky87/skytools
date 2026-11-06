@@ -3,6 +3,7 @@ package skytools
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -24,6 +25,9 @@ func TestDebianDependenciesUseInstalledNativePackagesAndRuntimeABIs(t *testing.T
 	}
 	if report.InstallCommand != "sudo apt-get install --no-install-recommends git libstdc++6" {
 		t.Fatal(report.InstallCommand)
+	}
+	if got := fmt.Sprint(report.InstallSteps); got != "[[/usr/bin/apt-get update] [/usr/bin/apt-get install --no-install-recommends git libstdc++6]]" {
+		t.Fatal(got)
 	}
 	if strings.Join(report.Missing[0].RequiredBy, ",") != "node" {
 		t.Fatal("lost dependent tool")

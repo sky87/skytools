@@ -42,6 +42,7 @@ const (
 	commandSelfUpdate
 	commandCancel
 	commandCancelAndQuit
+	commandInstallSystem
 )
 
 const (
@@ -111,6 +112,12 @@ type dashboardModel struct {
 	run          *dashboardRun
 	finished     []finishedStep
 	printMissing bool
+
+	// installPrefix is how missing system packages can be installed from here:
+	// nil when already root, sudo otherwise. canInstall is false without either.
+	installPrefix  []string
+	canInstall     bool
+	installRecheck dashboardCommand
 
 	self selfUpdateState
 }
@@ -273,6 +280,8 @@ func (d *dashboardModel) update(event termui.Event) dashboardCommand {
 		case key == 'r':
 			d.check = prerequisiteState{checking: true, generation: d.check.generation + 1}
 			return commandCheckAll
+		case key == 'i':
+			return d.installSystem(commandCheckAll)
 		case key == 'q':
 			d.printMissing = d.check.blocked()
 			return commandQuit
@@ -446,6 +455,8 @@ func (d *dashboardModel) updateReview(event termui.Event, key rune) dashboardCom
 			d.check = prerequisiteState{checking: true, generation: d.check.generation + 1, unhookedShell: d.check.unhookedShell}
 			return commandCheckPlan
 		}
+	case key == 'i':
+		return d.installSystem(commandCheckPlan)
 	case key == 'x':
 		if d.check.blocked() {
 			names := d.namesWithoutBlocked()
@@ -462,6 +473,25 @@ func (d *dashboardModel) updateReview(event termui.Event, key rune) dashboardCom
 		}
 	}
 	return commandNone
+}
+
+// installSystem asks the event loop to leave the screen and run the shown
+// install commands, then check prerequisites again with recheck.
+func (d *dashboardModel) installSystem(recheck dashboardCommand) dashboardCommand {
+	if !d.check.blocked() || !d.canInstall || len(d.check.report.InstallSteps) == 0 {
+		return commandNone
+	}
+	d.installRecheck = recheck
+	return commandInstallSystem
+}
+
+// systemInstalled records how the install went and starts the check again.
+func (d *dashboardModel) systemInstalled(err error) dashboardCommand {
+	if err != nil {
+		d.toast = "System package install failed: " + err.Error()
+	}
+	d.check = prerequisiteState{checking: true, generation: d.check.generation + 1, unhookedShell: d.check.unhookedShell}
+	return d.installRecheck
 }
 
 func (d *dashboardModel) updateRun(event termui.Event, key rune) dashboardCommand {
@@ -668,6 +698,7 @@ func (m *manager) dashboardWithVersions(version string, input *os.File, output i
 	}()
 	d = newDashboardModel(packages)
 	d.version, d.home, d.readOnly = version, m.home, m.readOnlyReason()
+	d.installPrefix, d.canInstall = m.systemInstallPrefix()
 	d.self.probe = probes.self != nil
 	d.self.checking = d.self.probe
 	var ui termui.Context
@@ -759,7 +790,22 @@ func (m *manager) dashboardWithVersions(version string, input *os.File, output i
 		}
 		width, height := terminal.Size()
 		d.width, d.height = width, height
-		switch d.update(event) {
+		command := d.update(event)
+		if command == commandInstallSystem {
+			// Leave the screen so sudo and apt own a normal terminal, then come back.
+			steps := d.check.report.InstallSteps
+			if err := terminal.Close(); err != nil {
+				return err
+			}
+			installErr := m.installSystemPackagesInTerminal(input, file, d.installPrefix, steps)
+			reopened, err := termui.Open(input, file)
+			if err != nil {
+				return errors.Join(installErr, err)
+			}
+			terminal = reopened
+			command = d.systemInstalled(installErr)
+		}
+		switch command {
 		case commandQuit:
 			return nil
 		case commandRefresh:

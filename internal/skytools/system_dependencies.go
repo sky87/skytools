@@ -23,6 +23,9 @@ type MissingSystemDependency struct {
 type SystemDependencyReport struct {
 	Platform, InstallCommand string
 	Missing                  []MissingSystemDependency
+	// InstallSteps are the commands that install Missing, to run as root. The
+	// dashboard runs them only when the user presses a key on a screen showing them.
+	InstallSteps [][]string
 }
 type SystemPackageProvider interface {
 	Check(context.Context, []SystemDependency) (SystemDependencyReport, error)
@@ -69,7 +72,7 @@ var packageRequirements = map[string]toolRequirements{
 	"lean":           {Install: []string{"certificates", "http-client", "tar", "gzip"}, Runtime: []string{"c-build", "gmp-runtime"}},
 	"claude":         {Install: []string{"certificates", "http-client", "bash"}, Runtime: []string{"cxx-runtime"}},
 	"codex":          {Install: []string{"certificates", "http-client", "tar", "gzip"}},
-	"opencode":       {Install: []string{"certificates", "http-client", "bash", "tar", "gzip", "unzip"}},
+	"opencode":       {Install: []string{"certificates", "http-client", "bash", "tar", "gzip"}},
 	"pi":             {Tools: []string{"node"}, Install: []string{"certificates"}},
 	"btop":           {Install: []string{"certificates"}, Runtime: []string{"terminfo"}},
 	"tailscale":      {Install: []string{"certificates"}},

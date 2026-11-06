@@ -123,6 +123,11 @@ func (p debianPackageProvider) Check(ctx context.Context, deps []SystemDependenc
 	}
 	if len(report.Missing) > 0 {
 		report.InstallCommand = "sudo apt-get install --no-install-recommends " + strings.Join(report.packageNames(), " ")
+		// A fresh image has no package lists, so refresh them first.
+		report.InstallSteps = [][]string{
+			{"/usr/bin/apt-get", "update"},
+			append([]string{"/usr/bin/apt-get", "install", "--no-install-recommends"}, report.packageNames()...),
+		}
 	}
 	return report, nil
 }

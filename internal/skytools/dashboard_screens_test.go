@@ -280,6 +280,71 @@ func TestBlockedReviewShowsWholeCommandAndCanDropTheBlocker(t *testing.T) {
 	}
 }
 
+func TestBlockedReviewOffersToInstallWithSudo(t *testing.T) {
+	report := blockedReport()
+	report.InstallSteps = [][]string{{"/usr/bin/apt-get", "update"}, {"/usr/bin/apt-get", "install", "--no-install-recommends", "libgmp-dev"}}
+	for _, tc := range []struct {
+		name       string
+		prefix     []string
+		canInstall bool
+		want       []string
+		hint       string
+	}{
+		{"sudo", []string{"/usr/bin/sudo"}, true, []string{"Press i to run these now", "sudo apt-get update", "sudo apt-get install --no-install-recommends libgmp-dev", "sudo asks for your password"}, "i install with sudo"},
+		{"root", nil, true, []string{"Press i to run these now", "apt-get update", "apt-get install --no-install-recommends libgmp-dev"}, "i install"},
+		{"neither", nil, false, []string{"Run this in another shell, then press r:", report.InstallCommand}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := screenFixture()
+			d.installPrefix, d.canInstall = tc.prefix, tc.canInstall
+			d.openReview([]string{"ocaml"})
+			d.applyPrerequisites(prerequisiteResult{generation: d.check.generation, report: report})
+			frame := drawScreen(d, 100, 30, termui.Event{})
+			joined := strings.Join(strings.Fields(frame), " ")
+			for _, want := range tc.want {
+				if !strings.Contains(joined, want) {
+					t.Errorf("missing %q:\n%s", want, frame)
+				}
+			}
+			if tc.name == "root" && strings.Contains(joined, "sudo") {
+				t.Errorf("root is shown sudo:\n%s", frame)
+			}
+			command := d.update(runeKey('i'))
+			if !tc.canInstall {
+				if command != commandNone || strings.Contains(joined, "i install") {
+					t.Fatalf("i offered without sudo or root: %v\n%s", command, frame)
+				}
+				return
+			}
+			if !strings.Contains(joined, tc.hint) || command != commandInstallSystem {
+				t.Fatalf("i = %v, hint %q:\n%s", command, tc.hint, frame)
+			}
+			if command := d.systemInstalled(nil); command != commandCheckPlan || !d.check.checking {
+				t.Fatalf("after install: %v, checking %v", command, d.check.checking)
+			}
+		})
+	}
+	// Nothing is missing: i does nothing.
+	d := screenFixture()
+	d.installPrefix, d.canInstall = []string{"/usr/bin/sudo"}, true
+	d.openReview([]string{"uv"})
+	d.applyPrerequisites(prerequisiteResult{generation: d.check.generation})
+	if command := d.update(runeKey('i')); command != commandNone {
+		t.Fatalf("i with nothing missing = %v", command)
+	}
+	// From the all-packages prerequisites screen it checks everything again.
+	d = screenFixture()
+	d.installPrefix, d.canInstall = []string{"/usr/bin/sudo"}, true
+	d.update(runeKey('p'))
+	d.applyPrerequisites(prerequisiteResult{generation: d.check.generation, report: report})
+	if command := d.update(runeKey('i')); command != commandInstallSystem {
+		t.Fatalf("prerequisites i = %v", command)
+	}
+	if command := d.systemInstalled(errors.New("exit status 100")); command != commandCheckAll || !strings.Contains(d.toast, "exit status 100") {
+		t.Fatalf("after failed install: %v, toast %q", command, d.toast)
+	}
+}
+
 func TestStaleBackgroundPrerequisiteResultIsIgnored(t *testing.T) {
 	d := screenFixture()
 	d.openReview([]string{"uv"})

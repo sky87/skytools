@@ -41,7 +41,7 @@ func TestCatalogMatchesEveryPrimaryPackagePolicy(t *testing.T) {
 		"https://downloads.claude.ai/claude-code-releases/latest":                         "2.1.319\n",
 		"https://releases.openai.com/codex/channels/latest":                               `{"tag_name":"rust-v0.166.0"}`,
 		tailscalePackages + "?mode=json":                                                  `{"TarballsVersion":"1.104.5","Tarballs":{}}`,
-		"https://registry.npmjs.org/opencode-ai/latest":                                   `{"version":"1.19.5"}`,
+		"https://opencode.ai/update/api/latest/cli/npm":                                   `{"channel":"latest","name":"cli","version":"2.2.5","active":true}`,
 		"https://registry.npmjs.org/@earendil-works/pi-coding-agent/latest":               `{"version":"1.5.0"}`,
 		"https://registry.npmjs.org/playwright/latest":                                    `{"version":"1.64.1"}`,
 		"https://registry.npmjs.org/@playwright/cli/latest":                               `{"version":"0.1.23"}`,
@@ -51,7 +51,7 @@ func TestCatalogMatchesEveryPrimaryPackagePolicy(t *testing.T) {
 		responses["https://api.github.com/repos/"+repo+"/releases/latest"] = `{"tag_name":"v1.2.3","draft":false,"prerelease":false}`
 	}
 	responses["https://api.github.com/repos/oven-sh/bun/releases/latest"] = `{"tag_name":"bun-v1.2.3","draft":false,"prerelease":false}`
-	want := map[string]string{"uv": "1.2.3", "rust": "1.99.1", "node": "28.3.0", "bun": "1.2.3", "dotnet": "12.0.101", "go": "1.28.1", "jdk": "29.0.1.0.4", "fzf": "1.2.3", "gh": "1.2.3", "ocaml": "6.0.1", "lean": "1.2.3", "claude": "2.1.319", "codex": "0.166.0", "opencode": "1.19.5", "pi": "1.5.0", "btop": "1.2.3"}
+	want := map[string]string{"uv": "1.2.3", "rust": "1.99.1", "node": "28.3.0", "bun": "1.2.3", "dotnet": "12.0.101", "go": "1.28.1", "jdk": "29.0.1.0.4", "fzf": "1.2.3", "gh": "1.2.3", "ocaml": "6.0.1", "lean": "1.2.3", "claude": "2.1.319", "codex": "0.166.0", "opencode": "2.2.5", "pi": "1.5.0", "btop": "1.2.3"}
 	want["playwright"], want["playwright-cli"], want["tailscale"] = "1.64.1", "0.1.23", "1.104.5"
 	m := testManager(t)
 	m.client.Transport = transportFunc(func(req *http.Request) (*http.Response, error) {

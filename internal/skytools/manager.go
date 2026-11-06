@@ -20,6 +20,7 @@ type manager struct {
 	out, errOut    io.Writer
 	client         *http.Client
 	systemProvider SystemPackageProvider
+	euid           func() int // nil means os.Geteuid; tests never run as root here
 }
 
 func newManager(ctx context.Context, out, errOut io.Writer) (*manager, error) {

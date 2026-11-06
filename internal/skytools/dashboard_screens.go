@@ -601,9 +601,36 @@ func (d *dashboardModel) prerequisiteLines(intro string, width int) []textLine {
 		lines = append(lines, keyValue(1, termui.Truncate(dep.Capability, keyWidth-1), strings.Join(dep.Packages, ", "), termui.StyleWarning, keyWidth, width)...)
 	}
 	lines = append(lines, nil)
-	lines = append(lines, wrapped(1, "Run this in another shell, then press r:", termui.StyleNormal, width)...)
-	lines = append(lines, wrapped(3, d.check.report.InstallCommand, termui.StyleTitle, width)...)
+	if !d.canInstallHere() {
+		lines = append(lines, wrapped(1, "Run this in another shell, then press r:", termui.StyleNormal, width)...)
+		lines = append(lines, wrapped(3, d.check.report.InstallCommand, termui.StyleTitle, width)...)
+		return lines
+	}
+	lines = append(lines, wrapped(1, "Press i to run these now. skytools steps aside while they run in this terminal:", termui.StyleNormal, width)...)
+	for _, step := range d.check.report.InstallSteps {
+		lines = append(lines, wrapped(3, displayCommand(d.installPrefix, step), termui.StyleTitle, width)...)
+	}
+	if len(d.installPrefix) > 0 {
+		lines = append(lines, wrapped(1, "sudo asks for your password there. Then the check runs again.", termui.StyleMuted, width)...)
+	}
+	lines = append(lines, nil)
+	lines = append(lines, wrapped(1, "Or run them in another shell, then press r.", termui.StyleMuted, width)...)
 	return lines
+}
+
+func (d *dashboardModel) canInstallHere() bool {
+	return d.canInstall && len(d.check.report.InstallSteps) > 0
+}
+
+// installHint is the key hint for installing missing system packages.
+func (d *dashboardModel) installHint() [][2]string {
+	if !d.canInstallHere() {
+		return nil
+	}
+	if len(d.installPrefix) > 0 {
+		return [][2]string{{"i", "install with sudo"}}
+	}
+	return [][2]string{{"i", "install"}}
 }
 
 func (d *dashboardModel) frameReview(p painter) {
@@ -719,7 +746,7 @@ func (d *dashboardModel) frameReviewBlocked(p painter, actions int) {
 	lines = append(lines, nil)
 	lines = append(lines, wrapped(1, "As root instead: skytools deps install --only "+strings.Join(blocked, ","), termui.StyleMuted, p.w)...)
 	remaining := d.namesWithoutBlocked()
-	hints := [][2]string{{"r", "check again"}}
+	hints := append(d.installHint(), [2]string{"r", "check again"})
 	if len(remaining) > 0 {
 		lines = append(lines, nil)
 		lines = append(lines, wrapped(1, fmt.Sprintf("The other %d can still run: x drops %s.", len(remaining), strings.Join(blocked, ", ")), termui.StyleNormal, p.w)...)
@@ -1048,7 +1075,7 @@ func (d *dashboardModel) framePrerequisites(p painter) {
 			}
 		}
 		lines = append(lines, wrapped(1, "Affected: "+strings.Join(names, ", "), termui.StyleNormal, p.w)...)
-		hints = append(hints, [2]string{"q", "quit, print command"})
+		hints = append(append(d.installHint(), hints...), [2]string{"q", "quit, print command"})
 	}
 	p.drawLines("prerequisites", lines, 2, p.h-1, &d.check.offset)
 	p.hints(hints...)

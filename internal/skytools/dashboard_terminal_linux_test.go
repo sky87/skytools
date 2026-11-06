@@ -404,14 +404,18 @@ func (p *dashboardTerminalPTY) quitAndCheckRestore() string {
 		p.t.Fatalf("dashboard did not exactly restore terminal attributes\nbefore: %+v\nafter: %+v", p.original, restored)
 	}
 	output := p.output.String()
-	if strings.Count(output, "\x1b[?1049h") != 1 || strings.Count(output, "\x1b[?25l") != 1 || strings.Count(output, "\x1b[?25h") != 1 || strings.Count(output, "\x1b[?1049l") != 1 {
+	// Each time the dashboard steps aside (to let sudo use the terminal) it
+	// leaves and later re-enters the alternate screen, so count pairs.
+	entered := strings.Count(output, "\x1b[?1049h")
+	if entered < 1 || strings.Count(output, "\x1b[?25l") != entered || strings.Count(output, "\x1b[?25h") != entered || strings.Count(output, "\x1b[?1049l") != entered {
 		p.t.Fatalf("dashboard did not pair alternate-screen/cursor setup and restoration: %q", output)
 	}
-	before, after, restored2 := strings.Cut(output, "\x1b[0m\x1b[?25h\x1b[?1049l")
-	if !restored2 || before == "" {
+	const restore = "\x1b[0m\x1b[?25h\x1b[?1049l"
+	last := strings.LastIndex(output, restore)
+	if last <= 0 || last < strings.LastIndex(output, "\x1b[?1049h") {
 		p.t.Fatalf("dashboard exit output did not restore cursor and original screen: %q", output)
 	}
-	return after
+	return output[last+len(restore):]
 }
 
 func dashboardTerminalIOCTL(fd, request uintptr, value unsafe.Pointer) error {
