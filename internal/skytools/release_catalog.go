@@ -173,10 +173,7 @@ func (m *manager) lookupLatestVersion(name string) (ReleaseInfo, error) {
 			}
 		case "ocaml":
 			info.SourceURL = "https://github.com/ocaml/ocaml.org/tree/main/data/releases"
-			info.Version, err = m.ocamlLTS()
-			if err == nil && info.Version == "" {
-				err = fmt.Errorf("no advertised OCaml LTS")
-			}
+			info.Version, err = m.ocamlLatest()
 		case "go":
 			info.SourceURL = "https://go.dev/dl/?mode=json"
 			var releases []goRelease
@@ -203,7 +200,7 @@ func (m *manager) lookupLatestVersion(name string) (ReleaseInfo, error) {
 				}
 			}
 		case "claude":
-			info.SourceURL = "https://downloads.claude.ai/claude-code-releases/stable"
+			info.SourceURL = "https://downloads.claude.ai/claude-code-releases/latest"
 			var data []byte
 			data, err = m.metadata(info.SourceURL)
 			info.Version = strings.TrimSpace(string(data))

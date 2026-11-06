@@ -56,10 +56,10 @@ func (m *manager) correttoMajor() (string, error) {
 
 type ocamlReleaseFile struct{ Name, Type string }
 
-// OCaml's exceptional LTS is classified by the same frontmatter used to build
-// ocaml.org. Read releases in descending version order and stop at the newest
-// LTS. Stable fallback is allowed only after all release metadata says no LTS.
-func (m *manager) ocamlLTS() (string, error) {
+// ocamlLatest reads the same release frontmatter used to build ocaml.org and
+// returns the release flagged is_latest. Releases are read newest first, so the
+// usual case costs one fetch; a newer file that is not flagged yet is skipped.
+func (m *manager) ocamlLatest() (string, error) {
 	var files []ocamlReleaseFile
 	if err := m.json("https://api.github.com/repos/ocaml/ocaml.org/contents/data/releases", &files); err != nil {
 		return "", err
@@ -87,35 +87,30 @@ func (m *manager) ocamlLTS() (string, error) {
 		newest, _ := latestStableVersion(versions[i] + " " + versions[j])
 		return newest == versions[i]
 	})
-	seenLatest := false
 	for _, version := range versions {
 		data, err := m.fetch("https://raw.githubusercontent.com/ocaml/ocaml.org/main/data/releases/" + version + ".md")
 		if err != nil {
 			return "", err
 		}
-		lts, latest, err := ocamlReleaseFlags(string(data), version)
+		latest, err := ocamlReleaseLatest(string(data), version)
 		if err != nil {
 			return "", err
 		}
-		seenLatest = seenLatest || latest
-		if lts {
+		if latest {
 			return version, nil
 		}
 	}
-	if !seenLatest {
-		return "", fmt.Errorf("OCaml release metadata has no current stable release")
-	}
-	return "", nil
+	return "", fmt.Errorf("OCaml release metadata flags no release as latest")
 }
 
-func ocamlReleaseFlags(data, expected string) (bool, bool, error) {
+func ocamlReleaseLatest(data, expected string) (bool, error) {
 	data = strings.ReplaceAll(data, "\r\n", "\n")
 	if !strings.HasPrefix(data, "---\n") {
-		return false, false, fmt.Errorf("invalid OCaml %s release frontmatter", expected)
+		return false, fmt.Errorf("invalid OCaml %s release frontmatter", expected)
 	}
 	end := strings.Index(data[4:], "\n---")
 	if end < 0 {
-		return false, false, fmt.Errorf("invalid OCaml %s release frontmatter", expected)
+		return false, fmt.Errorf("invalid OCaml %s release frontmatter", expected)
 	}
 	fields := map[string]string{}
 	for _, line := range strings.Split(data[4:4+end], "\n") {
@@ -130,12 +125,10 @@ func ocamlReleaseFlags(data, expected string) (bool, bool, error) {
 		}
 	}
 	if fields["kind"] != "compiler" || fields["version"] != expected {
-		return false, false, fmt.Errorf("invalid OCaml %s release classification", expected)
+		return false, fmt.Errorf("invalid OCaml %s release classification", expected)
 	}
-	for _, key := range []string{"is_lts", "is_latest"} {
-		if value := fields[key]; value != "" && value != "true" && value != "false" {
-			return false, false, fmt.Errorf("invalid OCaml %s %s flag", expected, key)
-		}
+	if value := fields["is_latest"]; value != "" && value != "true" && value != "false" {
+		return false, fmt.Errorf("invalid OCaml %s is_latest flag", expected)
 	}
-	return fields["is_lts"] == "true", fields["is_latest"] == "true", nil
+	return fields["is_latest"] == "true", nil
 }

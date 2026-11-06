@@ -185,6 +185,31 @@ func TestInventorySelectedMissingDefaultToolchainIsPartial(t *testing.T) {
 		}
 	}
 }
+
+// elan's own installer writes default_toolchain = "stable" and resolves it to a
+// concrete toolchain directory on first use. That is a working installation.
+func TestInventoryResolvesLeanStableAliasToNewestInstalledRelease(t *testing.T) {
+	for _, alias := range []string{"stable", "leanprover/lean4:stable"} {
+		m := inventoryManager(t)
+		populateInventory(t, m)
+		inventoryExe(t, m, ".elan/toolchains/leanprover--lean4---v4.35.0/bin/lean")
+		inventoryExe(t, m, ".elan/toolchains/leanprover--lean4---v4.36.0-rc1/bin/lean")
+		inventoryFile(t, m, ".elan/settings.toml", "default_toolchain = \""+alias+"\"\ntelemetry = false\nversion = \"12\"\n", 0644)
+		s := m.scan([]tool{{name: "lean"}})[0]
+		if !s.Installed || s.Partial || s.Version != "4.35.0" {
+			t.Fatalf("%s: %+v", alias, s)
+		}
+		// Before the first lean run nothing is downloaded yet: not complete.
+		for _, dir := range []string{"leanprover--lean4---v4.25.0", "leanprover--lean4---v4.35.0", "leanprover--lean4---v4.36.0-rc1"} {
+			if err := os.RemoveAll(m.at(".elan/toolchains/" + dir)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if s := m.scan([]tool{{name: "lean"}})[0]; s.Installed || !s.Partial {
+			t.Fatalf("%s without toolchains: %+v", alias, s)
+		}
+	}
+}
 func TestInventoryNeedsDefaultForToolchainProxies(t *testing.T) {
 	m := inventoryManager(t)
 	populateInventory(t, m)

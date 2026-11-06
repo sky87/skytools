@@ -149,7 +149,7 @@ func TestRustUpdateSelectsStableChannel(t *testing.T) {
 	}
 }
 
-func TestOCamlLTSFollowsOfficialFutureClassification(t *testing.T) {
+func TestOCamlFollowsTheOfficialLatestFlag(t *testing.T) {
 	m := inventoryManager(t)
 	requested := []string{}
 	m.client.Transport = transportFunc(func(req *http.Request) (*http.Response, error) {
@@ -157,35 +157,36 @@ func TestOCamlLTSFollowsOfficialFutureClassification(t *testing.T) {
 		var body string
 		switch req.URL.Path {
 		case "/repos/ocaml/ocaml.org/contents/data/releases":
-			body = `[{"name":"4.14.4.md","type":"file"},{"name":"6.0.2.md","type":"file"},{"name":"7.0.0-rc1.md","type":"file"},{"name":"6.1.0.md","type":"file"}]`
+			body = `[{"name":"4.14.4.md","type":"file"},{"name":"6.0.2.md","type":"file"},{"name":"7.0.0-rc1.md","type":"file"},{"name":"6.1.1.md","type":"file"},{"name":"6.1.0.md","type":"file"}]`
+		case "/ocaml/ocaml.org/main/data/releases/6.1.1.md":
+			// Published ahead of its announcement: not flagged yet, so skipped.
+			body = "---\nkind: compiler\nversion: 6.1.1\nis_latest: false\n---\n"
 		case "/ocaml/ocaml.org/main/data/releases/6.1.0.md":
 			body = "---\nkind: compiler\nversion: 6.1.0\nis_latest: true\n---\n"
-		case "/ocaml/ocaml.org/main/data/releases/6.0.2.md":
-			body = "---\nkind: compiler\nversion: 6.0.2\nis_lts: true\n---\n"
 		default:
 			t.Fatalf("unexpected metadata fetch %s", req.URL)
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
-	if got, err := m.ocamlLTS(); got != "6.0.2" || err != nil {
-		t.Fatalf("LTS=%q,%v", got, err)
+	if got, err := m.ocamlLatest(); got != "6.1.0" || err != nil {
+		t.Fatalf("latest=%q,%v", got, err)
 	}
 	if len(requested) != 3 {
 		t.Fatalf("metadata requests=%v", requested)
 	}
-	if packageChannel("ocaml") != "LTS" {
-		t.Fatal("OCaml policy channel missing")
+	if packageChannel("ocaml") != "stable" {
+		t.Fatal("OCaml must follow the stable channel, not LTS")
 	}
 }
 
-func TestOCamlStableFallbackRequiresValidNoLTSMetadata(t *testing.T) {
+func TestOCamlLatestRequiresValidMetadata(t *testing.T) {
 	for _, tc := range []struct {
 		body    string
 		status  int
 		wantErr bool
 	}{
 		{"---\nkind: compiler\nversion: 6.1.0\nis_latest: true\n---\n", 200, false},
-		{"---\nkind: compiler\nversion: 6.1.0\nis_lts: maybe\nis_latest: true\n---\n", 200, true},
+		{"---\nkind: compiler\nversion: 6.1.0\nis_latest: maybe\n---\n", 200, true},
 		{"---\nkind: compiler\nversion: 6.1.0\n---\n", 200, true},
 		{"not metadata", 200, true},
 		{"unavailable", 404, true},
@@ -199,9 +200,9 @@ func TestOCamlStableFallbackRequiresValidNoLTSMetadata(t *testing.T) {
 				}
 				return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 			})
-			got, err := m.ocamlLTS()
-			if got != "" || (err != nil) != tc.wantErr {
-				t.Fatalf("no-LTS fallback=%q,%v; wantErr=%v", got, err, tc.wantErr)
+			got, err := m.ocamlLatest()
+			if (err != nil) != tc.wantErr || (!tc.wantErr && got != "6.1.0") {
+				t.Fatalf("latest=%q,%v; wantErr=%v", got, err, tc.wantErr)
 			}
 		})
 	}

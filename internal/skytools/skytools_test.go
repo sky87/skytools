@@ -263,12 +263,12 @@ func TestLockSerializesAndHonorsCancellation(t *testing.T) {
 
 func TestStableCompilerSelection(t *testing.T) {
 	for _, input := range []string{"4.14.2 5.2.1 5.10.0 5.11.0~beta1", "5.10.0\n5.2.1\n4.14.2"} {
-		got, err := latestCompiler(input)
-		if err != nil || got != "ocaml-base-compiler.5.10.0" {
+		got, err := latestStableVersion(input)
+		if err != nil || got != "5.10.0" {
 			t.Fatalf("%s: %q %v", input, got, err)
 		}
 	}
-	if _, err := latestCompiler("5.3.0~beta1"); err == nil {
+	if _, err := latestStableVersion("5.3.0~beta1"); err == nil {
 		t.Fatal("accepted prerelease compiler")
 	}
 }

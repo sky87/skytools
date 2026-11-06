@@ -170,7 +170,7 @@ old name. When downloading the binary yourself, an optional equivalent is
 | `jdk` | Amazon Corretto, latest Java LTS | `~/.jdk/releases`, `~/.jdk/current` |
 | `fzf` | fzf | `~/.fzf` |
 | `gh` | GitHub CLI | `~/.local/bin/gh` |
-| `ocaml` | opam, latest OCaml LTS compiler | `~/.local/bin/opam`, `~/.opam` |
+| `ocaml` | opam, latest OCaml release compiler | `~/.local/bin/opam`, `~/.opam` |
 | `lean` | elan, Lean 4 stable | `~/.elan` |
 | `claude` | Claude Code | `~/.local/bin/claude` |
 | `codex` | Codex | `~/.local/bin/codex` |
@@ -258,7 +258,7 @@ version or Java major is fixed in the application. The old
 | Node.js | Latest LTS via nvm's upstream LTS channel |
 | .NET | Latest LTS SDK via the official installer's LTS channel |
 | Java | Latest LTS identified by official Adoptium release metadata, then the corresponding checksummed Amazon Corretto archive |
-| OCaml | Latest release advertised as LTS by the official OCaml release metadata |
+| OCaml | Latest release flagged `is_latest` by the official OCaml release metadata, which is newer than its 4.14 LTS line |
 | nvm and fzf | Latest published stable GitHub release |
 | Other tools | Latest upstream stable release/channel; these tools have no separate LTS selection |
 
@@ -267,22 +267,25 @@ provides Java's current LTS major. The installed JDK remains Amazon Corretto;
 installation fails clearly if Corretto does not yet publish that LTS archive.
 Upstream native metadata, rather than skytools marker files, identifies the
 installed JDK. Claude Code uses its documented
-[stable channel](https://code.claude.com/docs/en/setup).
+[latest channel](https://code.claude.com/docs/en/setup), the newest release,
+rather than the older `stable` channel. Codex uses its latest release channel,
+which excludes alpha prereleases.
 
-OCaml's LTS classification comes from the same
+OCaml's latest release comes from the same
 [official release metadata](https://github.com/ocaml/ocaml.org/tree/main/data/releases)
-used by ocaml.org, following its
-[compiler release cycle](https://ocaml.org/tools/compiler-release-cycle).
-
-An LTS line can be older than the newest feature release. For example, selecting
-Update for an OCaml installation on a newer feature line switches it to the
-advertised LTS line. `ensure` leaves complete existing installations alone.
+used by ocaml.org. Selecting Update for an OCaml 4.14 installation moves the
+default opam switch to the latest 5.x compiler and rebuilds its packages, so
+packages that do not support OCaml 5 can fail. Install fails clearly if opam's
+repository does not have that release yet. `ensure` leaves complete existing
+installations alone.
 
 Set `SKY_TOOLS_DISABLE_OPAM_SANDBOX=1` to explicitly disable opam sandboxing when
 Docker provides isolation and unprivileged namespaces are unavailable. Ordinary
 target machines retain opam sandboxing.
 
 Lean's default points to a concrete installed stable version so it works offline.
+An existing elan default of `stable`, which elan's own installer writes, counts
+as installed when a stable toolchain is present; it shows the newest one.
 `update` explicitly resolves the stable channel and selects the newest installed
 stable Lean version; `ensure` uses the newest stable version already installed.
 

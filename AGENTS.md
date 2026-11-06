@@ -44,8 +44,9 @@ metadata and current upstream LTS/stable versions. Highlight known updates only;
 show errors or unknown comparisons honestly. Keep `status` and noninteractive
 inventory filesystem-only. Do not persist version results or installation records.
 
-Resolve the latest upstream LTS for Node.js, .NET, Java, and OCaml dynamically during
-Install/Update. Tools without an official LTS use their latest stable channel.
+Resolve the latest upstream LTS for Node.js, .NET, and Java dynamically during
+Install/Update. OCaml, Claude Code, Codex, and tools without an official LTS use
+their latest release (never prereleases), not an older stable or LTS line.
 Use the same policies in dashboard release checks and installation paths.
 Never freeze runtime majors or helper versions in the source. Keep complete
 existing installations on `ensure`, including system/PATH tools; an explicit

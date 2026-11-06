@@ -51,7 +51,7 @@ func (m *manager) scan(tools []tool) []PackageStatus {
 
 func packageChannel(name string) string {
 	switch name {
-	case "node", "dotnet", "jdk", "ocaml":
+	case "node", "dotnet", "jdk":
 		return "LTS"
 	default:
 		return "stable"
@@ -312,14 +312,32 @@ func (m *manager) installedRustToolchain() string {
 func (m *manager) leanToolchain() (string, string) {
 	root := m.at(".elan/toolchains")
 	selected := nativeValue(m.at(".elan/settings.toml"), "default_toolchain")
-	if selected != "" {
-		path := filepath.Join(root, strings.NewReplacer("/", "--", ":", "---").Replace(selected))
-		if !executable(filepath.Join(path, "bin/lean")) {
+	switch selected {
+	case "":
+		return "", ""
+	case "stable", "lean4:stable", "leanprover/lean4:stable":
+		// elan's own installer writes this channel alias. elan resolves it to a
+		// concrete leanprover--lean4---vX.Y.Z directory on first use, so the
+		// default is the newest stable release in that form.
+		entries, _ := os.ReadDir(root)
+		var list []string
+		for _, entry := range entries {
+			version := strings.TrimPrefix(entry.Name(), "leanprover--lean4---v")
+			if version != entry.Name() && releaseVersion.MatchString(version) && executable(filepath.Join(root, entry.Name(), "bin/lean")) {
+				list = append(list, version)
+			}
+		}
+		newest, err := latestStableVersion(strings.Join(list, " "))
+		if err != nil {
 			return "", ""
 		}
-		return path, strings.TrimPrefix(strings.TrimPrefix(selected, "leanprover/lean4:"), "v")
+		return filepath.Join(root, "leanprover--lean4---v"+newest), newest
 	}
-	return "", ""
+	path := filepath.Join(root, strings.NewReplacer("/", "--", ":", "---").Replace(selected))
+	if !executable(filepath.Join(path, "bin/lean")) {
+		return "", ""
+	}
+	return path, strings.TrimPrefix(strings.TrimPrefix(selected, "leanprover/lean4:"), "v")
 }
 
 func (m *manager) systemStatus(name string) PackageStatus {

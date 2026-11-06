@@ -32,7 +32,7 @@ func (m *manager) tools() []tool {
 	}
 	dotnet := install("https://dot.net/v1/dotnet-install.sh", "bash", "--install-dir", m.at(".dotnet"), "--channel", "LTS", "--no-path")
 	codex := install("https://chatgpt.com/codex/install.sh", "sh", "--release", "latest")
-	claude := install("https://claude.ai/install.sh", "bash", "stable")
+	claude := install("https://claude.ai/install.sh", "bash", "latest")
 	opencode := install("https://opencode.ai/install", "bash", "--no-modify-path")
 	return []tool{
 		{"uv", "uv (Python manager)", missing(".local/bin/uv", install("https://astral.sh/uv/install.sh", "sh")), command(m.at(".local/bin/uv"), "self", "update"), []versionCommand{version("uv", ".local/bin/uv", "--version")}},
@@ -57,7 +57,7 @@ func (m *manager) tools() []tool {
 		{"jdk", "Amazon Corretto JDK", m.ensureJDK, m.installJDK, []versionCommand{version("java", ".jdk/current/bin/java", "-version"), version("javac", ".jdk/current/bin/javac", "-version")}},
 		{"fzf", "fzf", missing(".fzf/bin/fzf", m.ensureFZF), m.updateFZF, []versionCommand{version("fzf", ".fzf/bin/fzf", "--version")}},
 		{"gh", "GitHub CLI", missing(".local/bin/gh", m.installGH), m.installGH, []versionCommand{version("gh", ".local/bin/gh", "--version")}},
-		{"ocaml", "opam / OCaml LTS", m.ensureOCaml, m.updateOCaml, []versionCommand{version("opam", ".local/bin/opam", "--version"), version("ocaml", ".local/bin/opam", "exec", "--switch=default", "--", "ocaml", "-version")}},
+		{"ocaml", "opam / OCaml", m.ensureOCaml, m.updateOCaml, []versionCommand{version("opam", ".local/bin/opam", "--version"), version("ocaml", ".local/bin/opam", "exec", "--switch=default", "--", "ocaml", "-version")}},
 		{"lean", "elan / Lean 4 stable", m.ensureLean, m.updateLean, []versionCommand{version("elan", ".elan/bin/elan", "--version"), version("lean", ".elan/bin/elan", "toolchain", "list")}},
 		{"claude", "Claude Code", missing(".local/bin/claude", claude), claude, []versionCommand{version("claude", ".local/bin/claude", "--version")}},
 		{"codex", "Codex", missing(".local/bin/codex", codex), codex, []versionCommand{version("codex", ".local/bin/codex", "--version")}},
@@ -252,14 +252,6 @@ func latestStableVersion(output string) (string, error) {
 	return best, nil
 }
 
-func latestCompiler(output string) (string, error) {
-	version, err := latestStableVersion(output)
-	if err != nil {
-		return "", err
-	}
-	return "ocaml-base-compiler." + version, nil
-}
-
 func latestLeanToolchain(output string) (string, error) {
 	var versions []string
 	for _, line := range strings.Split(output, "\n") {
@@ -280,19 +272,16 @@ func (m *manager) compiler() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("query OCaml compilers: %w: %s", err, output)
 	}
-	lts, err := m.ocamlLTS()
+	latest, err := m.ocamlLatest()
 	if err != nil {
 		return "", fmt.Errorf("query OCaml release policy: %w", err)
 	}
-	if lts != "" {
-		for _, version := range strings.Fields(output) {
-			if version == lts {
-				return "ocaml-base-compiler." + lts, nil
-			}
+	for _, version := range strings.Fields(output) {
+		if version == latest {
+			return "ocaml-base-compiler." + latest, nil
 		}
-		return "", fmt.Errorf("advertised OCaml LTS %s is not available in opam", lts)
 	}
-	return latestCompiler(output)
+	return "", fmt.Errorf("latest OCaml release %s is not available in opam yet", latest)
 }
 
 func (m *manager) opamInit(reinit bool) error {
