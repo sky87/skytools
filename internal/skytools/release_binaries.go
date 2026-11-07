@@ -36,13 +36,23 @@ var releaseBinaries = map[string]releaseBinary{
 	"jq":         {"jqlang/jq", goArch, "jq-linux-{arch}", "", "jq"},
 	"fd":         {"sharkdp/fd", rustArch, "fd-{tag}-{arch}-unknown-linux-musl.tar.gz", "fd-{tag}-{arch}-unknown-linux-musl/fd", "fd"},
 	"shellcheck": {"koalaman/shellcheck", rustArch, "shellcheck-{tag}.linux.{arch}.tar.gz", "shellcheck-{tag}/shellcheck", "shellcheck"},
-	// The archive also has sg, which would shadow the system's sg(1).
-	"ast-grep": {"ast-grep/ast-grep", rustArch, "app-{arch}-unknown-linux-gnu.zip", "ast-grep", "ast-grep"},
-	"lazygit":  {"jesseduffield/lazygit", linuxArch, "lazygit_{version}_linux_{arch}.tar.gz", "lazygit", "lazygit"},
-	"delta":    {"dandavison/delta", rustArch, "delta-{version}-{arch}-unknown-linux-gnu.tar.gz", "delta-{version}-{arch}-unknown-linux-gnu/delta", "delta"},
-	"direnv":   {"direnv/direnv", goArch, "direnv.linux-{arch}", "", "direnv"},
-	"just":     {"casey/just", rustArch, "just-{version}-{arch}-unknown-linux-musl.tar.gz", "just", "just"},
-	"zoxide":   {"ajeetdsouza/zoxide", rustArch, "zoxide-{version}-{arch}-unknown-linux-musl.tar.gz", "zoxide", "zoxide"},
+	"ast-grep":   {"ast-grep/ast-grep", rustArch, "app-{arch}-unknown-linux-gnu.zip", "ast-grep", "ast-grep"},
+	"lazygit":    {"jesseduffield/lazygit", linuxArch, "lazygit_{version}_linux_{arch}.tar.gz", "lazygit", "lazygit"},
+	"delta":      {"dandavison/delta", rustArch, "delta-{version}-{arch}-unknown-linux-gnu.tar.gz", "delta-{version}-{arch}-unknown-linux-gnu/delta", "delta"},
+	"direnv":     {"direnv/direnv", goArch, "direnv.linux-{arch}", "", "direnv"},
+	"just":       {"casey/just", rustArch, "just-{version}-{arch}-unknown-linux-musl.tar.gz", "just", "just"},
+	"zoxide":     {"ajeetdsouza/zoxide", rustArch, "zoxide-{version}-{arch}-unknown-linux-musl.tar.gz", "zoxide", "zoxide"},
+}
+
+// binaryAliases are symlinks in ~/.local/bin to a tool's binary. ast-grep's
+// own sg is a deprecated wrapper that warns on every run and needs ast-grep on
+// PATH, so sg links to ast-grep instead. It takes precedence over the system's
+// sg(1).
+var binaryAliases = map[string][]string{"ast-grep": {"sg"}}
+
+// installedBinaries are the names a release binary tool puts in ~/.local/bin.
+func installedBinaries(name string) []string {
+	return append([]string{releaseBinaries[name].binary}, binaryAliases[name]...)
 }
 
 const neovimRepository = "neovim/neovim"
@@ -113,7 +123,15 @@ func (m *manager) installReleaseBinary(name string) error {
 	if err != nil {
 		return err
 	}
-	return atomicWrite(m.at(".local/bin", spec.binary), data, 0755)
+	if err := atomicWrite(m.at(".local/bin", spec.binary), data, 0755); err != nil {
+		return err
+	}
+	for _, alias := range binaryAliases[name] {
+		if err := link(spec.binary, m.at(".local/bin", alias)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *manager) archiveMember(asset verifiedAsset, name, member string) ([]byte, error) {

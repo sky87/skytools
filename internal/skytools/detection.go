@@ -213,11 +213,14 @@ func (m *manager) managedStatus(name string) PackageStatus {
 		root, version := m.leanToolchain()
 		s.Installed, s.Version = root != "", version
 	default:
-		spec, ok := releaseBinaries[name]
+		_, ok := releaseBinaries[name]
 		if !ok {
 			return PackageStatus{}
 		}
-		paths = []string{".local/bin/" + spec.binary}
+		paths = nil
+		for _, binary := range installedBinaries(name) {
+			paths = append(paths, ".local/bin/"+binary)
+		}
 	}
 	complete, any := true, false
 	for _, path := range paths {
@@ -357,6 +360,7 @@ func (m *manager) systemStatus(name string) PackageStatus {
 		"lean": {"lean"}, "claude": {"claude"}, "codex": {"codex"}, "opencode": {"opencode"}, "pi": {"pi"},
 		"neovim": {"nvim"},
 	}[name]
+	// Only the tool's own binary: aliases such as sg also name system commands.
 	if spec, ok := releaseBinaries[name]; ok && commands == nil {
 		commands = []string{spec.binary}
 	}

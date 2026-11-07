@@ -189,7 +189,7 @@ old name. When downloading the binary yourself, an optional equivalent is
 | `jq` | jq | `~/.local/bin/jq` |
 | `fd` | fd | `~/.local/bin/fd` |
 | `shellcheck` | ShellCheck | `~/.local/bin/shellcheck` |
-| `ast-grep` | ast-grep (without its `sg` alias, which would shadow the system's `sg`) | `~/.local/bin/ast-grep` |
+| `ast-grep` | ast-grep, and `sg` as a link to it, which takes precedence over the system's `sg` (`newgrp`) | `~/.local/bin/ast-grep`, `~/.local/bin/sg` |
 | `btop` | btop resource monitor, latest stable Linux binary | `~/.local/bin/btop` |
 | `tailscale` | Tailscale client and daemon, latest stable Linux binaries | `~/.local/bin/tailscale`, `~/.local/bin/tailscaled` |
 | `neovim` | Neovim | `~/.neovim/releases`, `~/.neovim/current` |

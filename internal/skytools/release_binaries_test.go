@@ -112,7 +112,8 @@ func TestReleaseBinariesInstallRawZipAndTarAssets(t *testing.T) {
 		t.Fatalf("jq version = %q, %v", version, err)
 	}
 
-	// The zip records no executable bit, and its sg must not be installed.
+	// The zip records no executable bit, and its own sg is not installed: sg
+	// links to ast-grep.
 	var archive bytes.Buffer
 	writer := zip.NewWriter(&archive)
 	for _, name := range []string{"ast-grep", "sg"} {
@@ -123,13 +124,43 @@ func TestReleaseBinariesInstallRawZipAndTarAssets(t *testing.T) {
 		file.Write([]byte("#!/bin/sh\necho ast-grep 0.51.1\n"))
 	}
 	writer.Close()
+	// Every Debian system has /usr/bin/sg (newgrp), and the fixture adds one where
+	// it is missing. It is not a partial ast-grep.
+	system := t.TempDir()
+	if err := atomicWrite(filepath.Join(system, "sg"), []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for i, entry := range m.env {
+		if strings.HasPrefix(entry, "PATH=") {
+			m.env[i] = entry + ":" + system
+		}
+	}
+	if _, err := m.lookup("sg"); err != nil {
+		t.Fatalf("no sg on PATH: %v", err)
+	}
+	if s := m.scan([]tool{{name: "ast-grep"}})[0]; s.Installed || s.Partial {
+		t.Fatalf("system sg reads as ast-grep: %+v", s)
+	}
 	arch := rustArch[runtime.GOARCH]
 	releaseFixture(t, m, "ast-grep/ast-grep", "0.51.1", map[string][]byte{"app-" + arch + "-unknown-linux-gnu.zip": archive.Bytes()})
 	if err := m.installReleaseBinary("ast-grep"); err != nil {
 		t.Fatal(err)
 	}
-	if !executable(m.at(".local/bin/ast-grep")) || exists(m.at(".local/bin/sg")) {
-		t.Fatal("ast-grep not installed alone and executable")
+	if target, err := os.Readlink(m.at(".local/bin/sg")); !executable(m.at(".local/bin/ast-grep")) || err != nil || target != "ast-grep" {
+		t.Fatalf("ast-grep not executable or sg -> %q, %v", target, err)
+	}
+	os.Remove(m.at(".local/bin/sg"))
+	if s := m.managedStatus("ast-grep"); s.Installed || !s.Partial {
+		t.Fatalf("ast-grep without sg reads as %+v", s)
+	}
+	var ensure func() error
+	for _, t := range m.tools() {
+		if t.name == "ast-grep" {
+			ensure = t.ensure
+		}
+	}
+	if err := ensure(); err != nil || !executable(m.at(".local/bin/sg")) {
+		t.Fatalf("ensure did not restore sg: %v", err)
 	}
 
 	body := "#!/bin/sh\necho ripgrep 15.2.0\n"

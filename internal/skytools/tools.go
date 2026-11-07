@@ -34,7 +34,20 @@ func (m *manager) tools() []tool {
 	binary := func(name, label string) tool {
 		path := ".local/bin/" + releaseBinaries[name].binary
 		update := func() error { return m.installReleaseBinary(name) }
-		return tool{name, label, missing(path, update), update, []versionCommand{version(releaseBinaries[name].binary, path, "--version")}}
+		// Install again when any of the tool's executables is missing.
+		ensure := func() error {
+			if m.managedStatus(name).Installed {
+				return nil
+			}
+			if err := update(); err != nil {
+				return err
+			}
+			if !m.managedStatus(name).Installed {
+				return fmt.Errorf("installer succeeded but %s is incomplete", name)
+			}
+			return nil
+		}
+		return tool{name, label, ensure, update, []versionCommand{version(releaseBinaries[name].binary, path, "--version")}}
 	}
 	dotnet := install("https://dot.net/v1/dotnet-install.sh", "bash", "--install-dir", m.at(".dotnet"), "--channel", "LTS", "--no-path")
 	codex := install("https://chatgpt.com/codex/install.sh", "sh", "--release", "latest")
