@@ -1,17 +1,15 @@
 package skytools
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
-	"time"
 )
 
 const selfRepository = "sky87/skytools"
@@ -23,11 +21,17 @@ func selfUpdateAsset(system, architecture string) (string, error) {
 	return "skytools_" + system + "_" + architecture, nil
 }
 
+// selfUpdate runs the latest release's install.sh on the running executable.
+// The update logic lives in that script, not in this binary, so a fix to it
+// reaches every installed skytools, including one whose own updater is broken.
+// The script is verified against the same release's SHA256SUMS before it runs;
+// it then verifies the new binary the same way, checks the version it reports,
+// and replaces the executable atomically, keeping symlinks and permissions.
+//
 // path is the running executable, supplied separately so tests never modify
-// their own test runner. Resolve aliases and replace the real file, not its link.
+// their own test runner.
 func (m *manager) selfUpdate(current, path string) error {
-	asset, err := selfUpdateAsset(runtime.GOOS, runtime.GOARCH)
-	if err != nil {
+	if _, err := selfUpdateAsset(runtime.GOOS, runtime.GOARCH); err != nil {
 		return err
 	}
 	target, err := filepath.EvalSymlinks(path)
@@ -39,15 +43,13 @@ func (m *manager) selfUpdate(current, path string) error {
 		return fmt.Errorf("open skytools executable: %w", err)
 	}
 	defer existing.Close()
-	before, err := existing.Stat()
-	if err != nil {
+	if info, err := existing.Stat(); err != nil {
 		return err
-	}
-	if !before.Mode().IsRegular() || before.Mode().Perm()&0111 == 0 {
+	} else if !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
 		return fmt.Errorf("not an executable file: %s", target)
 	}
-	// Lock the existing inode without creating any persistent update state. A
-	// second updater holding an old inode is rejected by the identity check below.
+	// Hold a lock on the old executable for the whole update, so two updaters
+	// never run at once. Nothing persistent is created.
 	if err := syscall.Flock(int(existing.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		if err == syscall.EWOULDBLOCK || err == syscall.EAGAIN {
 			return fmt.Errorf("another self-update is already running for %s", target)
@@ -56,91 +58,67 @@ func (m *manager) selfUpdate(current, path string) error {
 	}
 	defer syscall.Flock(int(existing.Fd()), syscall.LOCK_UN)
 
+	releases := m.selfReleases()
 	m.log("checking the latest skytools release on GitHub")
-	release, err := m.githubRelease(selfRepository)
+	sums, err := m.metadata(releases + "/latest/download/SHA256SUMS")
 	if err != nil {
-		return fmt.Errorf("check latest skytools release: %w", err)
+		return fmt.Errorf("download the latest skytools checksums: %w", err)
 	}
-	if comparison, known := compareVersions(current, release.Tag); known && comparison >= 0 {
-		if comparison == 0 {
-			m.log("skytools %s is already up to date", release.Tag)
-		} else {
-			m.log("skytools %s is newer than the latest release %s; keeping it", current, release.Tag)
+	script, err := m.metadata(releases + "/latest/download/install.sh")
+	if err != nil {
+		return fmt.Errorf("download the latest skytools install.sh: %w", err)
+	}
+	checksum, err := checksumFor(sums, "install.sh")
+	if err != nil {
+		return fmt.Errorf("the latest skytools release: %w", err)
+	}
+	if hash := sha256.Sum256(script); !strings.EqualFold(hex.EncodeToString(hash[:]), checksum) {
+		return fmt.Errorf("SHA-256 mismatch for install.sh; not running it")
+	}
+	file, err := os.CreateTemp("", "skytools-install-*.sh")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	if _, err := file.Write(script); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+
+	worker := *m
+	worker.env = setEnv(append([]string{}, m.env...), "SKYTOOLS_TARGET", target)
+	worker.env = setEnv(worker.env, "SKYTOOLS_RELEASES", releases)
+	cmd, err := worker.command(m.ctx, "sh", file.Name())
+	if err != nil {
+		return err
+	}
+	cmd.Stdout, cmd.Stderr = m.out, m.errOut
+	err = cmd.Run()
+	if cmd.Process != nil {
+		// Cancellation kills the script before its own cleanup runs; its staged
+		// file carries its process ID.
+		staged, _ := filepath.Glob(filepath.Join(filepath.Dir(target), ".skytools-update-"+strconv.Itoa(cmd.Process.Pid)+"-*"))
+		for _, name := range staged {
+			os.Remove(name)
 		}
-		return nil
 	}
-	urls := map[string]string{asset: release.DownloadURL(asset), "SHA256SUMS": release.DownloadURL("SHA256SUMS")}
-	checksums, err := m.metadata(urls["SHA256SUMS"])
+	if ctxErr := m.ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
 	if err != nil {
-		return fmt.Errorf("skytools release %s requires %s and SHA256SUMS: download checksums: %w", release.Tag, asset, err)
+		return fmt.Errorf("install.sh failed (%w); skytools %s is unchanged at %s", err, current, target)
 	}
-	checksum, err := checksumFor(checksums, asset)
-	if err != nil {
-		return err
-	}
-	staged, err := os.CreateTemp(filepath.Dir(target), ".skytools-update-*")
-	if err != nil {
-		return fmt.Errorf("prepare self-update in %s: %w; the executable directory must be writable (use a user-owned copy or rebuild the container image)", filepath.Dir(target), err)
-	}
-	defer os.Remove(staged.Name())
-	defer staged.Close()
-	m.log("downloading skytools %s for %s/%s", release.Tag, runtime.GOOS, runtime.GOARCH)
-	hash := sha256.New()
-	if err := m.download(urls[asset], io.MultiWriter(staged, hash)); err != nil {
-		return fmt.Errorf("download skytools: %w", err)
-	}
-	if !strings.EqualFold(hex.EncodeToString(hash.Sum(nil)), checksum) {
-		return fmt.Errorf("SHA-256 mismatch for %s", asset)
-	}
-	if err := staged.Chmod(before.Mode().Perm()); err != nil {
-		return err
-	}
-	if err := staged.Sync(); err != nil {
-		return err
-	}
-	if err := staged.Close(); err != nil {
-		return err
-	}
-	// Check both architecture compatibility and the embedded release version by
-	// running the verified candidate before replacing the working executable.
-	if err := m.validateSelfUpdate(staged.Name(), release.Tag); err != nil {
-		return err
-	}
-	if err := m.ctx.Err(); err != nil {
-		return err
-	}
-	after, err := os.Stat(target)
-	if err != nil {
-		return err
-	}
-	if !os.SameFile(before, after) {
-		return fmt.Errorf("skytools executable changed during update; retry")
-	}
-	if err := os.Rename(staged.Name(), target); err != nil {
-		return fmt.Errorf("replace skytools executable: %w", err)
-	}
-	m.log("updated skytools from %s to %s at %s; the next invocation uses the new version", current, release.Tag, target)
 	return nil
 }
 
-func (m *manager) validateSelfUpdate(path, version string) error {
-	ctx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
-	defer cancel()
-	cmd, err := m.command(ctx, path, "version")
-	if err != nil {
-		return err
+// selfReleases is where skytools releases are downloaded from. SKYTOOLS_RELEASES
+// overrides it for mirrors and tests, and is passed on to install.sh.
+func (m *manager) selfReleases() string {
+	if releases := strings.TrimSuffix(m.environmentValue("SKYTOOLS_RELEASES"), "/"); releases != "" {
+		return releases
 	}
-	var output versionOutput
-	cmd.Stdout, cmd.Stderr = &output, &output
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return fmt.Errorf("validate downloaded skytools: %w", err)
-	}
-	text := strings.TrimSpace(output.String())
-	if !strings.HasPrefix(text, "skytools ") || cleanVersion(strings.TrimPrefix(text, "skytools ")) != cleanVersion(version) {
-		return fmt.Errorf("downloaded skytools does not report release %s", version)
-	}
-	return nil
+	return "https://github.com/" + selfRepository + "/releases"
 }

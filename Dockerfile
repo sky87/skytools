@@ -4,6 +4,7 @@ WORKDIR /src
 COPY go.mod ./
 COPY cmd ./cmd
 COPY internal ./internal
+COPY install.sh ./
 ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOPROXY=off GOSUMDB=off
 
 FROM source AS test

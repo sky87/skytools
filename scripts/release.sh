@@ -11,5 +11,8 @@ for system in linux darwin; do
       go build -trimpath -ldflags="-s -w -X main.version=$version" -o "/out/$asset" ./cmd/skytools
   done
 done
+# install.sh is the installer and the update logic self-update runs; it ships
+# with each release and is listed in SHA256SUMS like the binaries.
+install -m 0644 install.sh /out/install.sh
 cd /out
-sha256sum skytools_linux_amd64 skytools_linux_arm64 skytools_darwin_amd64 skytools_darwin_arm64 > SHA256SUMS
+sha256sum skytools_linux_amd64 skytools_linux_arm64 skytools_darwin_amd64 skytools_darwin_arm64 install.sh > SHA256SUMS

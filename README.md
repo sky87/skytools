@@ -11,9 +11,34 @@ The devcontainer now downloads this executable instead of bundling its Bash pred
 
 ## Install on a target machine
 
-Download the executable for your OS and architecture, along with `SHA256SUMS`,
-from [GitHub Releases](https://github.com/sky87/skytools/releases). Release assets
-are public and can be downloaded without a GitHub account or access token.
+```sh
+curl -fsSL https://github.com/sky87/skytools/releases/latest/download/install.sh | sh
+```
+
+[`install.sh`](install.sh) installs the latest release to `~/.local/bin/skytools`.
+If `skytools` is already on your PATH in a directory you can write to, it updates
+that copy in place instead, following symlinks and keeping its permissions. Run it
+again at any time to update; it does nothing when you are on the latest release
+and keeps a build that is newer than it. No GitHub account, token, or API request
+is needed.
+
+The script downloads the executable for your OS and architecture, checks it
+against the release's `SHA256SUMS`, runs it to confirm it reports that release,
+and only then replaces the old one with an atomic rename. Any failure leaves the
+old executable as it was. It needs `curl`, `sha256sum` or `shasum`, and a POSIX
+shell. These variables change what it does:
+
+| Variable | Effect |
+| --- | --- |
+| `SKYTOOLS_VERSION=v0.7.1` | Install that release, even if it is older than the installed one |
+| `SKYTOOLS_INSTALL_DIR=/some/dir` | Install to `/some/dir/skytools` |
+
+For example: `curl -fsSL https://github.com/sky87/skytools/releases/latest/download/install.sh | SKYTOOLS_VERSION=v0.7.1 sh`.
+Then open the dashboard with `skytools`, and set up your current shell with
+`eval "$(skytools env)"`.
+
+To install by hand instead, download the asset for your platform and `SHA256SUMS`
+from [GitHub Releases](https://github.com/sky87/skytools/releases):
 
 | Platform | Asset |
 | --- | --- |
@@ -22,21 +47,8 @@ are public and can be downloaded without a GitHub account or access token.
 | macOS Intel | `skytools_darwin_amd64` |
 | macOS Apple Silicon | `skytools_darwin_arm64` |
 
-For example, on a target Linux ARM64 machine:
-
-```sh
-release=https://github.com/sky87/skytools/releases/latest/download
-curl --fail --location "$release/skytools_linux_arm64" -o skytools_linux_arm64
-curl --fail --location "$release/SHA256SUMS" -o SHA256SUMS
-grep '  skytools_linux_arm64$' SHA256SUMS | sha256sum --check -
-mkdir -p "$HOME/.local/bin"
-install -m 0755 skytools_linux_arm64 "$HOME/.local/bin/skytools"
-"$HOME/.local/bin/skytools"
-eval "$("$HOME/.local/bin/skytools" env)"
-```
-
-On macOS, verify the matching asset with `shasum -a 256 --check` instead of
-`sha256sum --check`. macOS builds are cross-compiled in Docker and support the
+Verify it with `grep '  skytools_linux_arm64$' SHA256SUMS | sha256sum --check -`
+(on macOS, `shasum -a 256 --check`) and install it with `install -m 0755`. macOS builds are cross-compiled in Docker and support the
 dashboard, inventory, and shell setup. Install/Update prerequisite checks currently
 support Debian-based Linux only. Windows and Alpine/musl tool installations are
 not currently supported.
@@ -142,13 +154,16 @@ packages are missing.
 
 `ensure` and `update` serialize changes with a per-home lock. A failed tool
 installation stops the command with an error; rerun it after fixing the cause.
-`self-update` selects the latest stable release of `sky87/skytools`, downloads the
-binary for the running OS/architecture, and verifies its published SHA-256 checksum.
-It validates the candidate's version before replacing the executable atomically;
-failed downloads or checks leave the current binary intact. Symlinks remain intact,
-permissions are preserved, and equal/newer versions are kept. The next invocation
-uses the new binary. The executable's directory must be writable. For an image-owned
-`/usr/local/bin/skytools`, rebuild the container image or use a user-owned copy.
+`self-update` downloads `install.sh` from the latest release, checks it against
+that release's `SHA256SUMS`, and runs it on the running executable. The update
+logic therefore lives in the script, not the binary: a fix to it reaches every
+installed skytools, including one whose own updater is broken. The script does
+what it does for a curl install (checksum, reported version, atomic replacement,
+symlinks and permissions kept, equal/newer versions kept), and a failed or
+cancelled update leaves the current binary intact. The next invocation uses the
+new binary. The executable's directory must be writable. For an image-owned
+`/usr/local/bin/skytools`, rebuild the container image, or run the curl command
+above to install a user-owned copy in `~/.local/bin`.
 This command changes only skytools; it does not update managed tools or shell files.
 Release archives for Go, Corretto, GitHub CLI, Tailscale, btop, and the other
 GitHub release binaries listed under Managed tools are checked against upstream
