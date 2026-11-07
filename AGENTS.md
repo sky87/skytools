@@ -47,6 +47,11 @@ metadata and current upstream LTS/stable versions. Highlight known updates only;
 show errors or unknown comparisons honestly. Keep `status` and noninteractive
 inventory filesystem-only. Do not persist version results or installation records.
 
+Get GitHub releases only through `internal/skytools/github.go` (latest release,
+download URLs, asset digests). It uses github.com's web routes; GitHub's REST API
+allows 60 unauthenticated requests an hour, so it is only a fallback, and skytools
+must never need a token.
+
 Resolve the latest upstream LTS for Node.js, .NET, and Java dynamically during
 Install/Update. OCaml, Claude Code, Codex, and tools without an official LTS use
 their latest release (never prereleases), not an older stable or LTS line.

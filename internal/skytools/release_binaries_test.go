@@ -4,8 +4,6 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,16 +22,22 @@ func TestBtopUpdateChecksDigestBeforeReplacingBinary(t *testing.T) {
 	m := testManager(t)
 	body := "#!/bin/sh\necho btop version: 1.2.3\n"
 	archive := tarData(t, []*tar.Header{{Name: "btop/bin/btop", Mode: 0755, Typeflag: tar.TypeReg, Size: int64(len(body))}}, []string{body})
-	hash := sha256.Sum256(archive)
-	digest := "sha256:" + hex.EncodeToString(hash[:])
+	digest := digestOf(archive)
 	arch := map[string]string{"amd64": "x86_64", "arm64": "aarch64"}[runtime.GOARCH]
 	asset := "btop-" + arch + "-unknown-linux-musl.tar.gz"
 	downloads := 0
 	m.client.Transport = transportFunc(func(req *http.Request) (*http.Response, error) {
 		var data []byte
+		if _, ok := latestRepository(req); ok {
+			return latestTagResponse("aristocratos/btop", "v1.2.3"), nil
+		}
 		switch req.URL.String() {
-		case "https://api.github.com/repos/aristocratos/btop/releases/latest":
-			data = []byte(fmt.Sprintf(`{"tag_name":"v1.2.3","assets":[{"name":%q,"digest":%q,"browser_download_url":%q}]}`, asset, digest, "https://github.com/aristocratos/btop/releases/download/v1.2.3/"+asset))
+		case "https://github.com/aristocratos/btop/releases/expanded_assets/v1.2.3":
+			digests := map[string]string{}
+			if digest != "" {
+				digests[asset] = digest
+			}
+			data = []byte(expandedAssetsPage("aristocratos/btop", "v1.2.3", digests))
 		case "https://github.com/aristocratos/btop/releases/download/v1.2.3/" + asset:
 			downloads++
 			data = archive
@@ -49,7 +53,8 @@ func TestBtopUpdateChecksDigestBeforeReplacingBinary(t *testing.T) {
 	if data, err := os.ReadFile(binary); err != nil || string(data) != body || !executable(binary) {
 		t.Fatalf("binary=%q err=%v", data, err)
 	}
-	for _, invalid := range []string{"", "sha256:" + strings.Repeat("0", 64)} {
+	// No digest on the page (and no API in this fixture), then a wrong one.
+	for _, invalid := range []string{"", strings.Repeat("0", 64)} {
 		digest = invalid
 		before := downloads
 		if err := m.installReleaseBinary("btop"); err == nil {
@@ -73,17 +78,17 @@ func TestBtopUpdateChecksDigestBeforeReplacingBinary(t *testing.T) {
 func releaseFixture(t *testing.T, m *manager, repository, tag string, assets map[string][]byte) *int {
 	t.Helper()
 	downloads := 0
-	var list []string
+	digests := map[string]string{}
 	for name, data := range assets {
-		hash := sha256.Sum256(data)
-		url := "https://github.com/" + repository + "/releases/download/" + tag + "/" + name
-		list = append(list, fmt.Sprintf(`{"name":%q,"digest":"sha256:%s","browser_download_url":%q}`, name, hex.EncodeToString(hash[:]), url))
+		digests[name] = digestOf(data)
 	}
-	metadata := fmt.Sprintf(`{"tag_name":%q,"assets":[%s]}`, tag, strings.Join(list, ","))
+	page := expandedAssetsPage(repository, tag, digests)
 	m.client.Transport = transportFunc(func(req *http.Request) (*http.Response, error) {
 		var data []byte
-		if req.URL.String() == "https://api.github.com/repos/"+repository+"/releases/latest" {
-			data = []byte(metadata)
+		if repo, ok := latestRepository(req); ok && repo == repository {
+			return latestTagResponse(repository, tag), nil
+		} else if req.URL.String() == "https://github.com/"+repository+"/releases/expanded_assets/"+tag {
+			data = []byte(page)
 		} else if name, ok := strings.CutPrefix(req.URL.String(), "https://github.com/"+repository+"/releases/download/"+tag+"/"); ok && assets[name] != nil {
 			downloads++
 			data = assets[name]

@@ -294,6 +294,15 @@ version or Java major is fixed in the application. The old
 | nvm and fzf | Latest published stable GitHub release |
 | Other tools | Latest upstream stable release/channel; these tools have no separate LTS selection |
 
+No GitHub account or token is needed. GitHub's REST API allows only 60
+unauthenticated requests an hour per IP address, and one dashboard session checks
+about 20 GitHub projects, so skytools does not use it in normal operation. It reads
+GitHub's ordinary web pages instead: `releases/latest` redirects to the latest
+stable release (never a draft or prerelease), and the release's asset list shows the
+SHA-256 digest GitHub recorded for each file. Those pages are meant for browsers,
+so if one changes shape, skytools falls back to the API for that one lookup.
+This covers the dashboard's version checks, every installer, and `self-update`.
+
 The [Adoptium available-releases API](https://api.adoptium.net/v3/info/available_releases)
 provides Java's current LTS major. The installed JDK remains Amazon Corretto;
 installation fails clearly if Corretto does not yet publish that LTS archive.

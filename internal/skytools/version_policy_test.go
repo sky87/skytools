@@ -48,26 +48,25 @@ func TestCorrettoMajorQueriesMetadataOnlyWhenInstallationNeedsIt(t *testing.T) {
 	}
 }
 
-func TestLatestTagRejectsPrereleasesAndUnsafeTags(t *testing.T) {
-	for _, tc := range []struct{ body, want string }{
-		{`{"tag_name":"v0.99.1","draft":false,"prerelease":false}`, "v0.99.1"},
-		{`{"tag_name":"0.99.1","draft":false,"prerelease":false}`, "0.99.1"},
-		{`{"tag_name":"v1.0.0","prerelease":true}`, ""},
-		{`{"tag_name":"v1.0.0","draft":true}`, ""},
-		{`{"tag_name":"v1.0.0-rc1"}`, ""},
-		{`{"tag_name":"../../main"}`, ""},
+func TestGitHubReleaseAcceptsOnlyNumericStableTags(t *testing.T) {
+	for _, tc := range []struct{ tag, version string }{
+		{"v0.99.1", "0.99.1"}, {"0.99.1", "0.99.1"}, {"jq-1.8.2", "1.8.2"}, {"bun-v1.3.0", "1.3.0"},
+		{"v1.0.0-rc1", ""}, {"nightly", ""},
 	} {
-		t.Run(tc.body, func(t *testing.T) {
+		t.Run(tc.tag, func(t *testing.T) {
 			m := inventoryManager(t)
 			m.client.Transport = transportFunc(func(req *http.Request) (*http.Response, error) {
-				if req.URL.String() != "https://api.github.com/repos/nvm-sh/nvm/releases/latest" {
+				if req.URL.String() != "https://github.com/nvm-sh/nvm/releases/latest" {
 					t.Fatalf("unexpected endpoint: %s", req.URL)
 				}
-				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(tc.body)), Header: http.Header{}}, nil
+				return latestTagResponse("nvm-sh/nvm", tc.tag), nil
 			})
-			got, err := m.latestTag("nvm-sh/nvm")
-			if got != tc.want || (err == nil) != (tc.want != "") {
-				t.Fatalf("tag = %q, %v; want %q", got, err, tc.want)
+			got, err := m.githubRelease("nvm-sh/nvm")
+			if got.Version != tc.version || (err == nil) != (tc.version != "") {
+				t.Fatalf("release = %+v, %v; want %q", got, err, tc.version)
+			}
+			if err == nil && (got.Tag != tc.tag || got.DownloadURL("a b") != "https://github.com/nvm-sh/nvm/releases/download/"+tc.tag+"/a%20b") {
+				t.Fatalf("release = %+v, URL %s", got, got.DownloadURL("a b"))
 			}
 		})
 	}
@@ -106,14 +105,14 @@ func TestFZFBinaryInstallVerifiesChecksumAndKeepsWorkingBinaryOnFailure(t *testi
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(body)}, nil
 	})
-	if err := m.installFZFBinary("v0.99.1"); err != nil {
+	if err := m.installFZFBinary(githubRelease{Repository: "junegunn/fzf", Tag: "v0.99.1", Version: "0.99.1"}); err != nil {
 		t.Fatal(err)
 	}
 	if !executable(m.at(".fzf/bin/fzf")) {
 		t.Fatal("installed fzf missing")
 	}
 	checksum = strings.Repeat("0", 64)
-	if err := m.installFZFBinary("v0.99.1"); err == nil || !strings.Contains(err.Error(), "SHA-256 mismatch") {
+	if err := m.installFZFBinary(githubRelease{Repository: "junegunn/fzf", Tag: "v0.99.1", Version: "0.99.1"}); err == nil || !strings.Contains(err.Error(), "SHA-256 mismatch") {
 		t.Fatalf("corrupt archive: %v", err)
 	}
 	if got := nativeText(m.at(".fzf/bin/fzf")); got != strings.TrimSpace(contents) {
@@ -156,8 +155,11 @@ func TestOCamlFollowsTheOfficialLatestFlag(t *testing.T) {
 		requested = append(requested, req.URL.Path)
 		var body string
 		switch req.URL.Path {
-		case "/repos/ocaml/ocaml.org/contents/data/releases":
-			body = `[{"name":"4.14.4.md","type":"file"},{"name":"6.0.2.md","type":"file"},{"name":"7.0.0-rc1.md","type":"file"},{"name":"6.1.1.md","type":"file"},{"name":"6.1.0.md","type":"file"}]`
+		case "/ocaml/ocaml.org/tree/main/data/releases":
+			if req.Header.Get("Accept") != "application/json" {
+				t.Fatalf("tree page requested as %q", req.Header.Get("Accept"))
+			}
+			body = ocamlTreePage("4.14.4.md", "6.0.2.md", "7.0.0-rc1.md", "6.1.1.md", "6.1.0.md")
 		case "/ocaml/ocaml.org/main/data/releases/6.1.1.md":
 			// Published ahead of its announcement: not flagged yet, so skipped.
 			body = "---\nkind: compiler\nversion: 6.1.1\nis_latest: false\n---\n"
@@ -195,8 +197,8 @@ func TestOCamlLatestRequiresValidMetadata(t *testing.T) {
 			m := inventoryManager(t)
 			m.client.Transport = transportFunc(func(req *http.Request) (*http.Response, error) {
 				body, status := tc.body, tc.status
-				if req.URL.Host == "api.github.com" {
-					body, status = `[{"name":"6.1.0.md","type":"file"}]`, 200
+				if req.URL.Path == "/ocaml/ocaml.org/tree/main/data/releases" {
+					body, status = ocamlTreePage("6.1.0.md"), 200
 				}
 				return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 			})
@@ -205,5 +207,33 @@ func TestOCamlLatestRequiresValidMetadata(t *testing.T) {
 				t.Fatalf("latest=%q,%v; wantErr=%v", got, err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func ocamlTreePage(names ...string) string {
+	var items []string
+	for _, name := range names {
+		items = append(items, fmt.Sprintf(`{"name":%q,"path":"data/releases/%s","contentType":"file"}`, name, name))
+	}
+	return `{"meta":{"title":"releases"},"payload":{"codeViewTreeRoute":{"path":"data/releases","tree":{"items":[` + strings.Join(items, ",") + `]}}}}`
+}
+
+// The tree page is a web route; if its shape changes, the contents API is used.
+func TestOCamlReleaseListFallsBackToTheContentsAPI(t *testing.T) {
+	m := inventoryManager(t)
+	m.client.Transport = transportFunc(func(req *http.Request) (*http.Response, error) {
+		body := ""
+		switch req.URL.String() {
+		case "https://github.com/ocaml/ocaml.org/tree/main/data/releases":
+			body = "<html>changed</html>"
+		case "https://api.github.com/repos/ocaml/ocaml.org/contents/data/releases":
+			body = `[{"name":"6.1.0.md","type":"file"}]`
+		default:
+			body = "---\nkind: compiler\nversion: 6.1.0\nis_latest: true\n---\n"
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	if got, err := m.ocamlLatest(); got != "6.1.0" || err != nil {
+		t.Fatalf("latest=%q,%v", got, err)
 	}
 }

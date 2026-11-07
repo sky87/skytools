@@ -17,12 +17,17 @@ type ReleaseInfo struct{ Version, Channel, SourceURL string }
 
 // Metadata checks are separate from installation downloads: bounded, cancellable,
 // and never retried for minutes while the dashboard is waiting for an answer.
-func (m *manager) metadata(url string) ([]byte, error) {
+func (m *manager) metadata(url string) ([]byte, error) { return m.metadataAccept(url, "") }
+
+func (m *manager) metadataAccept(url, accept string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(m.ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "skytools")
+	if accept != "" {
+		req.Header.Set("Accept", accept)
+	}
 	resp, err := m.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -86,24 +91,6 @@ func compareVersions(installed, latest string) (int, bool) {
 	return 0, true
 }
 
-type githubRelease struct {
-	Tag               string `json:"tag_name"`
-	Draft, Prerelease bool
-	Assets            []struct {
-		Name, Digest string
-		URL          string `json:"browser_download_url"`
-	}
-}
-
-func (m *manager) githubRelease(repository string) (githubRelease, error) {
-	var release githubRelease
-	err := m.metadataJSON("https://api.github.com/repos/"+repository+"/releases/latest", &release)
-	if err == nil && (release.Draft || release.Prerelease || !numericVersion.MatchString(cleanVersion(release.Tag))) {
-		err = fmt.Errorf("invalid stable release for %s", repository)
-	}
-	return release, err
-}
-
 func (m *manager) latestVersion(name string) (ReleaseInfo, error) {
 	ctx, cancel := context.WithTimeout(m.ctx, 12*time.Second)
 	defer cancel()
@@ -116,10 +103,10 @@ func (m *manager) lookupLatestVersion(name string) (ReleaseInfo, error) {
 	info := ReleaseInfo{Channel: packageChannel(name)}
 	var err error
 	if repository := releaseRepositories()[name]; repository != "" {
-		info.SourceURL = "https://api.github.com/repos/" + repository + "/releases/latest"
+		info.SourceURL = "https://github.com/" + repository + "/releases/latest"
 		var release githubRelease
 		release, err = m.githubRelease(repository)
-		info.Version = cleanVersion(release.Tag)
+		info.Version = release.Version
 	} else {
 		switch name {
 		case "node":
@@ -161,10 +148,10 @@ func (m *manager) lookupLatestVersion(name string) (ReleaseInfo, error) {
 			if err = m.metadataJSON("https://api.adoptium.net/v3/info/available_releases", &releases); err == nil {
 				var major string
 				if major, err = latestJavaLTS(releases); err == nil {
-					info.SourceURL = "https://api.github.com/repos/corretto/corretto-" + major + "/releases/latest"
+					info.SourceURL = "https://github.com/corretto/corretto-" + major + "/releases/latest"
 					var release githubRelease
 					release, err = m.githubRelease("corretto/corretto-" + major)
-					info.Version = cleanVersion(release.Tag)
+					info.Version = release.Version
 					if !strings.HasPrefix(info.Version, major+".") {
 						err = fmt.Errorf("Corretto release does not match Java LTS %s", major)
 					}
@@ -205,9 +192,11 @@ func (m *manager) lookupLatestVersion(name string) (ReleaseInfo, error) {
 			info.Version = strings.TrimSpace(string(data))
 		case "codex":
 			info.SourceURL = "https://releases.openai.com/codex/channels/latest"
-			var release githubRelease
-			err = m.metadataJSON(info.SourceURL, &release)
-			info.Version = cleanVersion(release.Tag)
+			var channel struct {
+				Tag string `json:"tag_name"`
+			}
+			err = m.metadataJSON(info.SourceURL, &channel)
+			info.Version = cleanVersion(channel.Tag)
 		case "tailscale":
 			info.SourceURL = tailscalePackages + "?mode=json"
 			var index tailscaleIndex

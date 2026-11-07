@@ -69,22 +69,10 @@ func (m *manager) selfUpdate(current, path string) error {
 		}
 		return nil
 	}
-	base := "https://github.com/" + selfRepository + "/releases/download/" + release.Tag + "/"
-	urls := map[string]string{}
-	for _, entry := range release.Assets {
-		if entry.Name == asset || entry.Name == "SHA256SUMS" {
-			if entry.URL != base+entry.Name || urls[entry.Name] != "" {
-				return fmt.Errorf("invalid skytools release asset %s", entry.Name)
-			}
-			urls[entry.Name] = entry.URL
-		}
-	}
-	if urls[asset] == "" || urls["SHA256SUMS"] == "" {
-		return fmt.Errorf("skytools release %s requires %s and SHA256SUMS", release.Tag, asset)
-	}
+	urls := map[string]string{asset: release.DownloadURL(asset), "SHA256SUMS": release.DownloadURL("SHA256SUMS")}
 	checksums, err := m.metadata(urls["SHA256SUMS"])
 	if err != nil {
-		return fmt.Errorf("download skytools checksums: %w", err)
+		return fmt.Errorf("skytools release %s requires %s and SHA256SUMS: download checksums: %w", release.Tag, asset, err)
 	}
 	checksum, err := checksumFor(checksums, asset)
 	if err != nil {

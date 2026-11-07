@@ -1,28 +1,12 @@
 package skytools
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 )
-
-// GitHub's latest release endpoint excludes drafts and prereleases. Validate
-// both the flags and tag so unexpected metadata never becomes an installer URL.
-func (m *manager) latestTag(repository string) (string, error) {
-	var release struct {
-		Tag        string `json:"tag_name"`
-		Draft      bool   `json:"draft"`
-		Prerelease bool   `json:"prerelease"`
-	}
-	if err := m.json("https://api.github.com/repos/"+repository+"/releases/latest", &release); err != nil {
-		return "", err
-	}
-	if release.Draft || release.Prerelease || !releaseVersion.MatchString(strings.TrimPrefix(release.Tag, "v")) {
-		return "", fmt.Errorf("invalid stable %s release %q", repository, release.Tag)
-	}
-	return release.Tag, nil
-}
 
 type javaReleases struct {
 	AvailableLTS  []int `json:"available_lts_releases"`
@@ -56,12 +40,43 @@ func (m *manager) correttoMajor() (string, error) {
 
 type ocamlReleaseFile struct{ Name, Type string }
 
+// ocamlReleaseFiles lists data/releases through github.com's tree page, which
+// answers in JSON when asked, instead of the rate-limited contents API (see
+// github.go). The API remains the fallback if the page's shape changes.
+func (m *manager) ocamlReleaseFiles() ([]ocamlReleaseFile, error) {
+	var page struct {
+		Payload struct {
+			Route struct {
+				Tree struct {
+					Items []struct{ Name, ContentType string }
+				}
+			} `json:"codeViewTreeRoute"`
+		}
+	}
+	data, err := m.metadataAccept("https://github.com/ocaml/ocaml.org/tree/main/data/releases", "application/json")
+	if err == nil {
+		err = json.Unmarshal(data, &page)
+	}
+	if err == nil && len(page.Payload.Route.Tree.Items) > 0 {
+		var files []ocamlReleaseFile
+		for _, item := range page.Payload.Route.Tree.Items {
+			files = append(files, ocamlReleaseFile{item.Name, item.ContentType})
+		}
+		return files, nil
+	}
+	var files []ocamlReleaseFile
+	if apiErr := m.metadataJSON("https://api.github.com/repos/ocaml/ocaml.org/contents/data/releases", &files); apiErr != nil {
+		return nil, fmt.Errorf("list OCaml releases: %v (GitHub API fallback: %w)", err, apiErr)
+	}
+	return files, nil
+}
+
 // ocamlLatest reads the same release frontmatter used to build ocaml.org and
 // returns the release flagged is_latest. Releases are read newest first, so the
 // usual case costs one fetch; a newer file that is not flagged yet is skipped.
 func (m *manager) ocamlLatest() (string, error) {
-	var files []ocamlReleaseFile
-	if err := m.json("https://api.github.com/repos/ocaml/ocaml.org/contents/data/releases", &files); err != nil {
+	files, err := m.ocamlReleaseFiles()
+	if err != nil {
 		return "", err
 	}
 	if len(files) >= 1000 {

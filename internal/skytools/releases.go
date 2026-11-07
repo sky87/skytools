@@ -136,11 +136,11 @@ func (m *manager) ensureJDK() error {
 }
 
 func (m *manager) installGH() error {
-	tag, err := m.latestTag("cli/cli")
+	release, err := m.githubRelease("cli/cli")
 	if err != nil {
 		return err
 	}
-	version := strings.TrimPrefix(tag, "v")
+	version := release.Version
 	installed, _ := m.output(m.at(".local/bin/gh"), "--version")
 	if strings.HasPrefix(installed, "gh version "+version+" ") {
 		return nil
@@ -152,8 +152,7 @@ func (m *manager) installGH() error {
 		extension = ".zip"
 	}
 	name := fmt.Sprintf("gh_%s_%s_%s%s", version, platform, runtime.GOARCH, extension)
-	base := "https://github.com/cli/cli/releases/download/v" + version + "/"
-	data, err := m.fetch(base + "gh_" + version + "_checksums.txt")
+	data, err := m.fetch(release.DownloadURL("gh_" + version + "_checksums.txt"))
 	if err != nil {
 		return err
 	}
@@ -161,7 +160,7 @@ func (m *manager) installGH() error {
 	if err != nil {
 		return err
 	}
-	dir, err := m.archive(base+name, checksum, m.at(".local/state/skytools"))
+	dir, err := m.archive(release.DownloadURL(name), checksum, m.at(".local/state/skytools"))
 	if err != nil {
 		return err
 	}
@@ -177,14 +176,13 @@ func (m *manager) installGH() error {
 	return atomicWrite(m.at(".local/bin/gh"), data, 0755)
 }
 
-func (m *manager) installFZFBinary(tag string) error {
-	version := strings.TrimPrefix(tag, "v")
+func (m *manager) installFZFBinary(release githubRelease) error {
+	version := release.Version
 	if !releaseVersion.MatchString(version) {
-		return fmt.Errorf("invalid fzf release %q", tag)
+		return fmt.Errorf("invalid fzf release %q", release.Tag)
 	}
 	name := fmt.Sprintf("fzf-%s-%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
-	base := "https://github.com/junegunn/fzf/releases/download/" + tag + "/"
-	checksums, err := m.fetch(base + "fzf_" + version + "_checksums.txt")
+	checksums, err := m.fetch(release.DownloadURL("fzf_" + version + "_checksums.txt"))
 	if err != nil {
 		return err
 	}
@@ -192,7 +190,7 @@ func (m *manager) installFZFBinary(tag string) error {
 	if err != nil {
 		return err
 	}
-	dir, err := m.archive(base+name, checksum, m.at(".fzf"))
+	dir, err := m.archive(release.DownloadURL(name), checksum, m.at(".fzf"))
 	if err != nil {
 		return err
 	}

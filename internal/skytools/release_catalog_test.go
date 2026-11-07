@@ -34,8 +34,7 @@ func TestCatalogMatchesEveryPrimaryPackagePolicy(t *testing.T) {
 		"https://nodejs.org/dist/index.json":                                              `[{"version":"v99.1.0","lts":false},{"version":"v28.3.0","lts":"Next"},{"version":"v26.1.0","lts":"Old"}]`,
 		"https://builds.dotnet.microsoft.com/dotnet/release-metadata/releases-index.json": `{"releases-index":[{"release-type":"sts","support-phase":"active","latest-sdk":"99.0.100"},{"release-type":"lts","support-phase":"active","latest-sdk":"12.0.101"},{"release-type":"lts","support-phase":"eol","latest-sdk":"98.0.100"}]}`,
 		"https://api.adoptium.net/v3/info/available_releases":                             `{"available_lts_releases":[25,29],"most_recent_lts":29}`,
-		"https://api.github.com/repos/corretto/corretto-29/releases/latest":               `{"tag_name":"29.0.1.0.4"}`,
-		"https://api.github.com/repos/ocaml/ocaml.org/contents/data/releases":             `[{"name":"6.0.1.md","type":"file"}]`,
+		"https://github.com/ocaml/ocaml.org/tree/main/data/releases":                      ocamlTreePage("6.0.1.md"),
 		"https://raw.githubusercontent.com/ocaml/ocaml.org/main/data/releases/6.0.1.md":   "---\nkind: compiler\nversion: 6.0.1\nis_latest: true\n---\n",
 		"https://static.rust-lang.org/dist/channel-rust-stable.toml":                      "[pkg.rust]\nversion = \"1.99.1 (hash date)\"\n",
 		"https://downloads.claude.ai/claude-code-releases/latest":                         "2.1.319\n",
@@ -47,11 +46,14 @@ func TestCatalogMatchesEveryPrimaryPackagePolicy(t *testing.T) {
 		"https://registry.npmjs.org/@playwright/cli/latest":                               `{"version":"0.1.23"}`,
 	}
 	responses["https://go.dev/dl/?mode=json"] = fmt.Sprintf(`[{"version":"go1.28.1","stable":true,"files":[{"filename":"go1.28.1.%s-%s.tar.gz","os":%q,"arch":%q,"kind":"archive","sha256":%q}]}]`, runtime.GOOS, runtime.GOARCH, runtime.GOOS, runtime.GOARCH, strings.Repeat("a", 64))
+	// GitHub projects answer through github.com's web routes. Nothing here
+	// serves api.github.com, so any API use fails the test.
+	tags := map[string]string{"corretto/corretto-29": "29.0.1.0.4", "oven-sh/bun": "bun-v1.2.3", "jqlang/jq": "jq-1.2.3"}
 	for _, repo := range releaseRepositories() {
-		responses["https://api.github.com/repos/"+repo+"/releases/latest"] = `{"tag_name":"v1.2.3","draft":false,"prerelease":false}`
+		if tags[repo] == "" {
+			tags[repo] = "v1.2.3"
+		}
 	}
-	responses["https://api.github.com/repos/oven-sh/bun/releases/latest"] = `{"tag_name":"bun-v1.2.3","draft":false,"prerelease":false}`
-	responses["https://api.github.com/repos/jqlang/jq/releases/latest"] = `{"tag_name":"jq-1.2.3","draft":false,"prerelease":false}`
 	want := map[string]string{"uv": "1.2.3", "rust": "1.99.1", "node": "28.3.0", "bun": "1.2.3", "dotnet": "12.0.101", "go": "1.28.1", "jdk": "29.0.1.0.4", "fzf": "1.2.3", "gh": "1.2.3", "ocaml": "6.0.1", "lean": "1.2.3", "claude": "2.1.319", "codex": "0.166.0", "opencode": "2.2.5", "pi": "1.5.0", "btop": "1.2.3"}
 	want["playwright"], want["playwright-cli"], want["tailscale"] = "1.64.1", "0.1.23", "1.104.5"
 	for name := range releaseRepositories() {
@@ -61,6 +63,9 @@ func TestCatalogMatchesEveryPrimaryPackagePolicy(t *testing.T) {
 	}
 	m := testManager(t)
 	m.client.Transport = transportFunc(func(req *http.Request) (*http.Response, error) {
+		if repo, ok := latestRepository(req); ok && tags[repo] != "" {
+			return latestTagResponse(repo, tags[repo]), nil
+		}
 		body, ok := responses[req.URL.String()]
 		if !ok {
 			return nil, fmt.Errorf("unexpected endpoint %s", req.URL)

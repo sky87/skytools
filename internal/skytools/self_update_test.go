@@ -20,7 +20,8 @@ import (
 type selfUpdateFixture struct {
 	m                           *manager
 	path, body, checksum, asset string
-	metadata                    string
+	metadata                    string // where /releases/latest redirects
+	listed                      string // the asset SHA256SUMS lists
 	binaryStatus                int
 	beforeBinary                func(*http.Request) error
 	requests                    map[string]int
@@ -40,16 +41,17 @@ func newSelfUpdateFixture(t *testing.T) *selfUpdateFixture {
 	hash := sha256.Sum256([]byte(f.body))
 	f.checksum = hex.EncodeToString(hash[:])
 	base := "https://github.com/sky87/skytools/releases/download/v9.8.7/"
-	f.metadata = fmt.Sprintf(`{"tag_name":"v9.8.7","assets":[{"name":%q,"browser_download_url":%q},{"name":"SHA256SUMS","browser_download_url":%q}]}`, asset, base+asset, base+"SHA256SUMS")
+	f.metadata = "https://github.com/sky87/skytools/releases/tag/v9.8.7"
+	f.listed = asset
 	m.client.Transport = transportFunc(func(req *http.Request) (*http.Response, error) {
 		url := req.URL.String()
 		f.requests[url]++
 		body, status := "", 200
 		switch url {
-		case "https://api.github.com/repos/sky87/skytools/releases/latest":
-			body = f.metadata
+		case "https://github.com/sky87/skytools/releases/latest":
+			return redirectResponse(f.metadata), nil
 		case base + "SHA256SUMS":
-			body = f.checksum + "  " + asset + "\n"
+			body = f.checksum + "  " + f.listed + "\n"
 		case base + asset:
 			if f.beforeBinary != nil {
 				if err := f.beforeBinary(req); err != nil {
@@ -140,11 +142,11 @@ func TestSelfUpdateFailureKeepsWorkingExecutable(t *testing.T) {
 			case "wrong version":
 				f.setBody("#!/bin/sh\necho skytools v9.8.6\n")
 			case "prerelease":
-				f.metadata = strings.Replace(f.metadata, `"tag_name":`, `"prerelease":true,"tag_name":`, 1)
+				f.metadata = strings.Replace(f.metadata, "v9.8.7", "v9.8.8-rc1", 1)
 			case "foreign URL":
 				f.metadata = strings.ReplaceAll(f.metadata, "https://github.com/", "https://example.invalid/")
 			case "missing platform":
-				f.metadata = strings.ReplaceAll(f.metadata, f.asset, "skytools_other_platform")
+				f.listed = "skytools_other_platform"
 			}
 			if err := f.m.selfUpdate("dev", f.path); err == nil {
 				t.Fatal("accepted broken release")

@@ -133,10 +133,11 @@ func (m *manager) updateRust() error {
 }
 
 func (m *manager) installNVM() error {
-	version, err := m.latestTag("nvm-sh/nvm")
+	release, err := m.githubRelease("nvm-sh/nvm")
 	if err != nil {
 		return err
 	}
+	version := release.Tag
 	if err := os.MkdirAll(m.at(".nvm"), 0755); err != nil {
 		return err
 	}
@@ -212,10 +213,11 @@ func (m *manager) ensureFZF() error {
 func (m *manager) updateFZF() error { return m.installFZF() }
 
 func (m *manager) installFZF() error {
-	tag, err := m.latestTag("junegunn/fzf")
+	release, err := m.githubRelease("junegunn/fzf")
 	if err != nil {
 		return err
 	}
+	tag := release.Tag
 	if _, err := os.Stat(m.at(".fzf/.git")); os.IsNotExist(err) {
 		if err := m.run("git", "clone", "--depth", "1", "--branch", tag, "https://github.com/junegunn/fzf.git", m.at(".fzf")); err != nil {
 			return err
@@ -230,7 +232,7 @@ func (m *manager) installFZF() error {
 			return err
 		}
 	}
-	return m.installFZFBinary(tag)
+	return m.installFZFBinary(release)
 }
 
 func (m *manager) installOpam() error {

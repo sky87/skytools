@@ -89,20 +89,13 @@ func (m *manager) releaseAsset(name, repository string, arches map[string]string
 	if err != nil {
 		return a, err
 	}
-	a.tag, a.version = release.Tag, cleanVersion(release.Tag)
+	a.tag, a.version = release.Tag, release.Version
 	asset := a.expand(template)
-	for _, candidate := range release.Assets {
-		if candidate.Name != asset {
-			continue
-		}
-		a.url = "https://github.com/" + repository + "/releases/download/" + release.Tag + "/" + asset
-		a.checksum = strings.TrimPrefix(candidate.Digest, "sha256:")
-		if candidate.URL != a.url || !strings.HasPrefix(candidate.Digest, "sha256:") || !validChecksum(a.checksum) {
-			return a, fmt.Errorf("%s release has no valid SHA-256 digest for %s", name, asset)
-		}
-		return a, nil
+	if a.checksum, err = m.githubDigest(release, asset); err != nil {
+		return a, err
 	}
-	return a, fmt.Errorf("%s release %s has no %s", name, release.Tag, asset)
+	a.url = release.DownloadURL(asset)
+	return a, nil
 }
 
 func (m *manager) installReleaseBinary(name string) error {
