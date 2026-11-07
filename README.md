@@ -340,7 +340,11 @@ installations alone.
 
 Set `SKY_TOOLS_DISABLE_OPAM_SANDBOX=1` to explicitly disable opam sandboxing when
 Docker provides isolation and unprivileged namespaces are unavailable. Ordinary
-target machines retain opam sandboxing.
+target machines retain opam sandboxing. opam's own installer turns sandboxing
+back on whenever it upgrades an existing opam root, and still prints a
+"Sandboxing is not working" error while doing so. With this variable set,
+skytools then removes the sandbox wrappers from `~/.opam/config`, on both
+`ensure` and `update`.
 
 Lean's default points to a concrete installed stable version so it works offline.
 An existing elan default of `stable`, which elan's own installer writes, counts

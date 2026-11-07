@@ -330,10 +330,28 @@ func (m *manager) opamInit(reinit bool) error {
 	} else {
 		args = append(args, "--bare")
 	}
-	if os.Getenv("SKY_TOOLS_DISABLE_OPAM_SANDBOX") == "1" {
+	if opamSandboxDisabled() {
 		args = append(args, "--disable-sandboxing")
 	}
 	return m.run(args...)
+}
+
+func opamSandboxDisabled() bool { return os.Getenv("SKY_TOOLS_DISABLE_OPAM_SANDBOX") == "1" }
+
+// disableOpamSandbox removes opam's bubblewrap wrappers when the user disabled
+// sandboxing. opam's own install.sh runs a plain `opam init --reinit` on every
+// existing root, which adds them back, and a later `--reinit --disable-sandboxing`
+// does not remove them; every compiler build would then fail without bwrap.
+func (m *manager) disableOpamSandbox() error {
+	if !opamSandboxDisabled() {
+		return nil
+	}
+	for _, field := range []string{"wrap-build-commands", "wrap-install-commands", "wrap-remove-commands"} {
+		if err := m.run(m.at(".local/bin/opam"), "option", "--global", field+"=[]"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *manager) ensureOCaml() error {
@@ -347,6 +365,10 @@ func (m *manager) ensureOCaml() error {
 			return err
 		}
 	} else if err != nil {
+		return err
+	}
+	// Also repairs a root whose sandbox an earlier update turned back on.
+	if err := m.disableOpamSandbox(); err != nil {
 		return err
 	}
 	output, err := m.output(m.at(".local/bin/opam"), "switch", "list", "--short")
@@ -373,6 +395,9 @@ func (m *manager) updateOCaml() error {
 		return err
 	}
 	if err := m.opamInit(true); err != nil {
+		return err
+	}
+	if err := m.disableOpamSandbox(); err != nil {
 		return err
 	}
 	if err := m.run(m.at(".local/bin/opam"), "update", "--yes"); err != nil {
