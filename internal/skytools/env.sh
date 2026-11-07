@@ -15,7 +15,7 @@ export DOTNET_CLI_TELEMETRY_OPTOUT=1
 
 # Prepend missing entries without growing PATH every time the file is sourced.
 for _skytools_dir in "$ELAN_HOME/bin" "$OPAMROOT/default/bin" "$FZF_HOME/bin" \
-  "$HOME/.jdk/current/bin" "$GOPATH/bin" "$HOME/.go/current/bin" "$HOME/.dotnet" "$BUN_INSTALL/bin" \
+  "$HOME/.neovim/current/bin" "$HOME/.jdk/current/bin" "$GOPATH/bin" "$HOME/.go/current/bin" "$HOME/.dotnet" "$BUN_INSTALL/bin" \
   "$CARGO_HOME/bin" "$NVM_DIR/current/bin" "$PNPM_HOME" "$PNPM_HOME/bin" \
   "$HOME/.opencode/bin" "$HOME/.local/bin"; do
   case ":${PATH:-}:" in
@@ -35,5 +35,19 @@ case $- in
     if [ -s "$OPAMROOT/opam-init/init.sh" ]; then
       . "$OPAMROOT/opam-init/init.sh" >/dev/null 2>&1
     fi
+    # Hook only the copies skytools installed; both hooks are idempotent.
+    _skytools_shell=
+    if [ -n "${ZSH_VERSION:-}" ]; then
+      _skytools_shell=zsh
+    elif [ -n "${BASH_VERSION:-}" ]; then
+      _skytools_shell=bash
+    fi
+    if [ -n "$_skytools_shell" ] && [ -x "$HOME/.local/bin/direnv" ]; then
+      eval "$("$HOME/.local/bin/direnv" hook "$_skytools_shell")"
+    fi
+    if [ -n "$_skytools_shell" ] && [ -x "$HOME/.local/bin/zoxide" ]; then
+      eval "$("$HOME/.local/bin/zoxide" init "$_skytools_shell")"
+    fi
+    unset _skytools_shell
     ;;
 esac

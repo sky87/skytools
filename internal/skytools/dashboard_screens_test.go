@@ -118,18 +118,34 @@ func TestPackagesScreenFitsEverySizeWithoutOverflow(t *testing.T) {
 	}
 }
 
-func TestWholeCatalogFitsAt80By24(t *testing.T) {
+// The catalog no longer fits in 24 rows: at 80x24 the list scrolls to every
+// package, and from 36 rows the whole catalog is on screen at once.
+func TestWholeCatalogIsReachableAt80By24AndVisibleAt80By36(t *testing.T) {
 	m := testManager(t)
 	d := newDashboardModel(m.scan(m.tools()))
 	d.version = "test"
 	frame := drawScreen(d, 80, 24, termui.Event{})
+	if !strings.Contains(frame, "uv: uv (Python manager)") || !strings.Contains(frame, "1-18 of 30") {
+		t.Errorf("inspector missing:\n%s", frame)
+	}
 	for _, p := range d.packages {
-		if !strings.Contains(frame, p.Name) {
-			t.Errorf("%s is not visible at 80x24:\n%s", p.Name, frame)
+		d.cursorName = p.Name
+		frame := drawScreen(d, 80, 24, termui.Event{})
+		found := false
+		for _, row := range strings.Split(frame, "\n") {
+			fields := strings.Fields(row)
+			found = found || len(fields) > 1 && fields[0] == "›" && fields[1] == p.Name
+		}
+		if !found {
+			t.Errorf("%s is not reachable at 80x24:\n%s", p.Name, frame)
 		}
 	}
-	if !strings.Contains(frame, "uv · Not installed.") {
-		t.Errorf("inspector missing:\n%s", frame)
+	d.cursorName = "uv"
+	frame = drawScreen(d, 80, 36, termui.Event{})
+	for _, p := range d.packages {
+		if !strings.Contains(frame, p.Name) {
+			t.Errorf("%s is not visible at 80x36:\n%s", p.Name, frame)
+		}
 	}
 	rows := append(screenFixture().packages, PackageStatus{Name: "tailscale", Channel: "stable", Installed: true, Path: "/home/dev/.local/bin/tailscale", Origin: "managed"})
 	d = newDashboardModel(rows)

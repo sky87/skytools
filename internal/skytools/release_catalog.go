@@ -50,7 +50,7 @@ var numericVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)*$`)
 
 func cleanVersion(value string) string {
 	value = strings.TrimSpace(value)
-	for _, prefix := range []string{"rust-v", "bun-v", "Corretto-", "go", "v"} {
+	for _, prefix := range []string{"rust-v", "bun-v", "Corretto-", "jq-", "go", "v"} {
 		if strings.HasPrefix(value, prefix) {
 			value = strings.TrimPrefix(value, prefix)
 			break
@@ -115,8 +115,7 @@ func (m *manager) latestVersion(name string) (ReleaseInfo, error) {
 func (m *manager) lookupLatestVersion(name string) (ReleaseInfo, error) {
 	info := ReleaseInfo{Channel: packageChannel(name)}
 	var err error
-	repositories := map[string]string{"uv": "astral-sh/uv", "bun": "oven-sh/bun", "fzf": "junegunn/fzf", "gh": "cli/cli", "lean": "leanprover/lean4", "btop": "aristocratos/btop"}
-	if repository := repositories[name]; repository != "" {
+	if repository := releaseRepositories()[name]; repository != "" {
 		info.SourceURL = "https://api.github.com/repos/" + repository + "/releases/latest"
 		var release githubRelease
 		release, err = m.githubRelease(repository)

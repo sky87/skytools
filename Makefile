@@ -1,5 +1,6 @@
 .PHONY: test smoke integration playwright-integration full-integration build release fmt
 export VERSION
+INTEGRATION_TOOLS := uv,go,gh,btop,ripgrep,jq,fd,shellcheck,ast-grep,neovim,lazygit,delta,direnv,just,zoxide
 
 test:
 	docker build --target test -t skytools-test .
@@ -12,10 +13,10 @@ integration: smoke
 	docker build --target runtime -t skytools-runtime .
 	@test_volume=$$(docker volume create); \
 	  trap 'docker volume rm "$$test_volume" >/dev/null' EXIT; \
-	  docker run --rm -v "$$test_volume:/home/dev" skytools-runtime ensure --only uv,go,gh,btop && \
-	  docker run --rm --network none -v "$$test_volume:/home/dev" skytools-runtime ensure --only uv,go,gh,btop && \
+	  docker run --rm -v "$$test_volume:/home/dev" skytools-runtime ensure --only $(INTEGRATION_TOOLS) && \
+	  docker run --rm --network none -v "$$test_volume:/home/dev" skytools-runtime ensure --only $(INTEGRATION_TOOLS) && \
 	  docker run --rm --network none -v "$$test_volume:/home/dev" -v "$(CURDIR)/scripts:/checks:ro" \
-	    --entrypoint sh skytools-runtime /checks/check-status.sh --only uv,go,gh,btop
+	    --entrypoint sh skytools-runtime /checks/check-status.sh --only $(INTEGRATION_TOOLS)
 
 playwright-integration: smoke
 	docker build --target runtime -t skytools-runtime .

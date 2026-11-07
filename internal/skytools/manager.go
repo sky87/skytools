@@ -45,7 +45,7 @@ func newManager(ctx context.Context, out, errOut io.Writer) (*manager, error) {
 	} {
 		m.env = setEnv(m.env, key, value)
 	}
-	paths := []string{".local/bin", ".opencode/bin", ".local/share/pnpm/bin", ".local/share/pnpm", ".nvm/current/bin", ".cargo/bin", ".bun/bin", ".dotnet", ".go/current/bin", "go/bin", ".jdk/current/bin", ".fzf/bin", ".opam/default/bin", ".elan/bin"}
+	paths := []string{".local/bin", ".opencode/bin", ".local/share/pnpm/bin", ".local/share/pnpm", ".nvm/current/bin", ".cargo/bin", ".bun/bin", ".dotnet", ".go/current/bin", "go/bin", ".jdk/current/bin", ".neovim/current/bin", ".fzf/bin", ".opam/default/bin", ".elan/bin"}
 	for i := range paths {
 		paths[i] = m.at(paths[i])
 	}

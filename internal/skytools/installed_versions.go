@@ -66,6 +66,15 @@ func (m *manager) installedVersion(ctx context.Context, p PackageStatus) (string
 	}
 	// Most tools prefix their version with their name. Go uses go1.x.y.
 	output = strings.ReplaceAll(output, "go version go", "go version ")
+	switch p.Name {
+	case "jq":
+		output = strings.Replace(output, "jq-", "jq ", 1) // jq-1.8.2
+	case "lazygit":
+		// commit=..., build date=..., version=0.66.2, os=linux, ..., git version=2.47.3
+		if _, after, ok := strings.Cut(output, ", version="); ok {
+			output, _, _ = strings.Cut(after, ",")
+		}
+	}
 	output = termui.Sanitize(output)
 	match := outputVersion.FindStringSubmatch(output)
 	if len(match) != 2 {

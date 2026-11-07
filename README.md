@@ -150,7 +150,8 @@ permissions are preserved, and equal/newer versions are kept. The next invocatio
 uses the new binary. The executable's directory must be writable. For an image-owned
 `/usr/local/bin/skytools`, rebuild the container image or use a user-owned copy.
 This command changes only skytools; it does not update managed tools or shell files.
-Release archives for Go, Corretto, GitHub CLI, btop, and Tailscale are checked against upstream
+Release archives for Go, Corretto, GitHub CLI, Tailscale, btop, and the other
+GitHub release binaries listed under Managed tools are checked against upstream
 SHA-256 checksums, extracted in staging directories, and activated after validation.
 Other tools use their upstream installers or package managers over HTTPS.
 
@@ -184,8 +185,19 @@ old name. When downloading the binary yourself, an optional equivalent is
 | `codex` | Codex | `~/.local/bin/codex` |
 | `opencode` | OpenCode 2, via its official v2 installer | `~/.opencode/bin` |
 | `pi` | pi coding agent | `~/.local/share/pnpm` |
+| `ripgrep` | ripgrep (`rg`) | `~/.local/bin/rg` |
+| `jq` | jq | `~/.local/bin/jq` |
+| `fd` | fd | `~/.local/bin/fd` |
+| `shellcheck` | ShellCheck | `~/.local/bin/shellcheck` |
+| `ast-grep` | ast-grep (without its `sg` alias, which would shadow the system's `sg`) | `~/.local/bin/ast-grep` |
 | `btop` | btop resource monitor, latest stable Linux binary | `~/.local/bin/btop` |
 | `tailscale` | Tailscale client and daemon, latest stable Linux binaries | `~/.local/bin/tailscale`, `~/.local/bin/tailscaled` |
+| `neovim` | Neovim | `~/.neovim/releases`, `~/.neovim/current` |
+| `lazygit` | lazygit | `~/.local/bin/lazygit` |
+| `delta` | delta git pager | `~/.local/bin/delta` |
+| `direnv` | direnv | `~/.local/bin/direnv` |
+| `just` | just command runner | `~/.local/bin/just` |
+| `zoxide` | zoxide | `~/.local/bin/zoxide` |
 | `playwright` | Playwright and playwright-core Node libraries, Chromium, Firefox, WebKit | `~/.local/share/skytools/playwright`, `~/.cache/ms-playwright` |
 | `playwright-cli` | Microsoft's browser automation CLI for coding agents | same shared prefix; `~/.local/bin/playwright-cli` |
 
@@ -204,6 +216,17 @@ Userspace networking has no TUN device, so other programs reach the tailnet only
 through Tailscale's SOCKS5 or HTTP proxy options. A `tailscale` client already on
 PATH counts as installed; `tailscaled` is not checked there because system packages
 put it in `/usr/sbin`. Tailscale installation is Linux only.
+
+ripgrep, jq, fd, ShellCheck, ast-grep, Neovim, lazygit, delta, direnv, just,
+and zoxide use the official Linux amd64/arm64 binaries from each project's latest
+stable GitHub release, preferring static musl builds; delta and ast-grep only
+publish glibc builds for both architectures. Each download is checked against the
+SHA-256 digest GitHub records for the release asset. These tools are Linux only.
+Neovim keeps each release whole, with its runtime files, and `~/.neovim/current`
+points at the active one, as Go does. Interactive bash and zsh shells load the
+direnv and zoxide hooks when skytools installed those tools in `~/.local/bin`;
+copies elsewhere on PATH are left for you to hook. skytools does not change your
+git configuration; to use delta, set `core.pager` to `delta` yourself.
 
 Python versions can be installed with `uv python install` after setup. Operating
 system packages from the old devcontainer (editors, C/C++ compilers, LaTeX,
@@ -334,7 +357,8 @@ and xz, depending on the tool. Rust/OCaml/Lean also need native build tools.
 .NET needs ICU, OpenSSL 3, the C/C++ and Kerberos runtimes, timezone data, and zlib.
 OCaml needs m4, pkg-config, rsync, GMP development files, and bubblewrap (unless opam
 sandboxing is explicitly disabled as described above). btop needs terminal data
-(`ncurses-base`). Existing complete tools skip installer-only prerequisites on
+(`ncurses-base`), lazygit needs git, and Neovim, delta, and ast-grep need the C
+runtime (delta and ast-grep also need `libgcc-s1`). Existing complete tools skip installer-only prerequisites on
 `ensure`, while runtime prerequisites are still checked. For missing ICU/OpenSSL,
 the suggested development packages pull in the distribution's runtime package.
 Playwright additionally needs its browser libraries, fonts, and Xvfb. Its Debian
@@ -360,7 +384,7 @@ format operation, test, and application execution below happens inside Docker.
 make fmt               # gofmt inside Docker
 make test              # enforce stdlib-only modules, formatting, go vet, unit tests
 make smoke             # above + static executable in a minimal non-root container
-make integration       # install uv/Go/gh/btop, repeat ensure offline in the same test home
+make integration       # install uv/Go/gh and the release binaries, repeat ensure offline
 make playwright-integration # install agent CLI/libraries; launch all browsers offline
 make full-integration  # install the complete tool set in an isolated Docker volume
 make build             # native Linux executable exported to dist/skytools

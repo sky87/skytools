@@ -30,6 +30,12 @@ func (m *manager) tools() []tool {
 			return nil
 		}
 	}
+	// binary installs one executable from its official release into ~/.local/bin.
+	binary := func(name, label string) tool {
+		path := ".local/bin/" + releaseBinaries[name].binary
+		update := func() error { return m.installReleaseBinary(name) }
+		return tool{name, label, missing(path, update), update, []versionCommand{version(releaseBinaries[name].binary, path, "--version")}}
+	}
 	dotnet := install("https://dot.net/v1/dotnet-install.sh", "bash", "--install-dir", m.at(".dotnet"), "--channel", "LTS", "--no-path")
 	codex := install("https://chatgpt.com/codex/install.sh", "sh", "--release", "latest")
 	claude := install("https://claude.ai/install.sh", "bash", "latest")
@@ -65,13 +71,29 @@ func (m *manager) tools() []tool {
 		{"codex", "Codex", missing(".local/bin/codex", codex), codex, []versionCommand{version("codex", ".local/bin/codex", "--version")}},
 		{"opencode", "OpenCode", missing(".opencode/bin/opencode", opencode), opencode, []versionCommand{version("opencode", ".opencode/bin/opencode", "--version")}},
 		{"pi", "pi coding agent", m.ensurePi, command("pnpm", "add", "--global", "--ignore-scripts", "@earendil-works/pi-coding-agent@latest"), []versionCommand{{"pi", []string{"pi", "--version"}}}},
-		{"btop", "btop resource monitor", missing(".local/bin/btop", m.installBtop), m.installBtop, []versionCommand{version("btop", ".local/bin/btop", "--version")}},
+		binary("ripgrep", "ripgrep (rg)"),
+		binary("jq", "jq JSON processor"),
+		binary("fd", "fd file finder"),
+		binary("shellcheck", "ShellCheck shell script linter"),
+		binary("ast-grep", "ast-grep structural search"),
+		binary("btop", "btop resource monitor"),
 		{"tailscale", "Tailscale client and daemon", func() error {
 			if m.managedStatus("tailscale").Installed {
 				return nil
 			}
 			return m.installTailscale()
 		}, m.installTailscale, []versionCommand{version("tailscale", ".local/bin/tailscale", "version")}},
+		{"neovim", "Neovim", func() error {
+			if m.managedStatus("neovim").Installed {
+				return nil
+			}
+			return m.installNeovim()
+		}, m.installNeovim, []versionCommand{version("nvim", ".neovim/current/bin/nvim", "--version")}},
+		binary("lazygit", "lazygit"),
+		binary("delta", "delta git pager"),
+		binary("direnv", "direnv"),
+		binary("just", "just command runner"),
+		binary("zoxide", "zoxide"),
 		{"playwright", "Playwright Node library / browsers", func() error { return m.installPlaywright("playwright", false) }, func() error { return m.installPlaywright("playwright", true) }, []versionCommand{version("playwright", ".local/bin/playwright", "--version")}},
 		{"playwright-cli", "Playwright browser automation for agents", func() error { return m.installPlaywright("playwright-cli", false) }, func() error { return m.installPlaywright("playwright-cli", true) }, []versionCommand{version("playwright-cli", ".local/bin/playwright-cli", "--version")}},
 	}

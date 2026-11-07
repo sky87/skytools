@@ -93,8 +93,11 @@ CommonJS/ES module scripts without editing project dependencies. Prefer project
 packages over the shared fallback. Keep inventory filesystem-only, including
 native browser revisions and completion markers. Preserve existing user and
 project browser configuration; do not install agent skills automatically.
-btop uses its checksummed official Linux
-release binary in `~/.local/bin/btop`. Tailscale uses its checksummed official
+btop, ripgrep, jq, fd, ShellCheck, ast-grep, lazygit, delta, direnv, just, and
+zoxide use their official Linux release binaries in `~/.local/bin`, verified
+against GitHub's asset SHA-256 digest; Neovim keeps whole releases in
+`~/.neovim/releases` behind `~/.neovim/current`. Hook only skytools' own direnv
+and zoxide in interactive shells, and never edit the user's git configuration. Tailscale uses its checksummed official
 Linux binaries in `~/.local/bin`; never start `tailscaled`, install a service, or
 log in on the user's behalf.
 

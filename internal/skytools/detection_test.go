@@ -34,8 +34,16 @@ func populateInventory(t testing.TB, m *manager) {
 		".nvm/versions/node/v24.14.0/bin/node", ".nvm/versions/node/v24.14.0/bin/npm", ".nvm/versions/node/v24.14.0/bin/pnpm", ".bun/bin/bun", ".dotnet/dotnet", ".go/current/bin/go", ".jdk/current/bin/java", ".jdk/current/bin/javac",
 		".fzf/bin/fzf", ".local/bin/gh", ".local/bin/opam", ".opam/default/bin/ocaml", ".opam/default/bin/ocamlc", ".elan/bin/elan", ".elan/bin/lean", ".elan/toolchains/leanprover--lean4---v4.25.0/bin/lean",
 		".local/bin/claude", ".local/bin/codex", ".opencode/bin/opencode", ".local/share/pnpm/pi", ".local/bin/btop", ".local/bin/tailscale", ".local/bin/tailscaled",
+		".local/bin/rg", ".local/bin/jq", ".local/bin/fd", ".local/bin/shellcheck", ".local/bin/ast-grep", ".neovim/releases/0.12.6/bin/nvim",
+		".local/bin/lazygit", ".local/bin/delta", ".local/bin/direnv", ".local/bin/just", ".local/bin/zoxide",
 	} {
 		inventoryExe(t, m, name)
+	}
+	if err := link(m.at(".neovim/releases/0.12.6"), m.at(".neovim/current")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(m.at(".neovim/releases/0.12.6/share/nvim/runtime"), 0755); err != nil {
+		t.Fatal(err)
 	}
 	if err := link(m.at(".nvm/versions/node/v24.14.0"), m.at(".nvm/current")); err != nil {
 		t.Fatal(err)
@@ -77,7 +85,7 @@ func TestInventoryIsOfflineReadOnlyAndDoesNotExecuteTools(t *testing.T) {
 	populateInventory(t, m)
 	before := inventorySnapshot(t, m.home)
 	statuses := m.scan(m.tools())
-	if len(statuses) != 19 {
+	if len(statuses) != len(m.tools()) || len(statuses) != 30 {
 		t.Fatalf("got %d packages", len(statuses))
 	}
 	for _, s := range statuses {

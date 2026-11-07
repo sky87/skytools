@@ -159,8 +159,11 @@ func (m *manager) managedStatus(name string) PackageStatus {
 		paths = []string{".fzf/bin/fzf"}
 	case "gh":
 		paths = []string{".local/bin/gh"}
-	case "btop":
-		paths = []string{".local/bin/btop"}
+	case "neovim":
+		paths = []string{".neovim/current/bin/nvim"}
+		if version := filepath.Base(distributionRoot(m.at(".neovim/current/bin/nvim"))); releaseVersion.MatchString(version) {
+			s.Version = version
+		}
 	case "tailscale":
 		paths = []string{".local/bin/tailscale", ".local/bin/tailscaled"}
 	case "claude":
@@ -210,7 +213,11 @@ func (m *manager) managedStatus(name string) PackageStatus {
 		root, version := m.leanToolchain()
 		s.Installed, s.Version = root != "", version
 	default:
-		return PackageStatus{}
+		spec, ok := releaseBinaries[name]
+		if !ok {
+			return PackageStatus{}
+		}
+		paths = []string{".local/bin/" + spec.binary}
 	}
 	complete, any := true, false
 	for _, path := range paths {
@@ -236,8 +243,10 @@ func (m *manager) managedStatus(name string) PackageStatus {
 		complete = complete && s.Version != ""
 	case "go":
 		complete = complete && goVersion.MatchString(s.Version)
+	case "neovim":
+		complete = complete && s.Version != "" && neovimTree(distributionRoot(m.at(".neovim/current/bin/nvim")))
 	}
-	footprint := map[string]string{"rust": ".rustup", "node": ".nvm", "bun": ".bun", "dotnet": ".dotnet", "go": ".go", "jdk": ".jdk", "fzf": ".fzf", "ocaml": ".opam", "lean": ".elan", "opencode": ".opencode"}[name]
+	footprint := map[string]string{"rust": ".rustup", "node": ".nvm", "bun": ".bun", "dotnet": ".dotnet", "go": ".go", "jdk": ".jdk", "fzf": ".fzf", "ocaml": ".opam", "lean": ".elan", "opencode": ".opencode", "neovim": ".neovim"}[name]
 	if footprint != "" {
 		_, err := os.Lstat(m.at(footprint))
 		any = any || err == nil
@@ -346,7 +355,11 @@ func (m *manager) systemStatus(name string) PackageStatus {
 		"bun": {"bun"}, "dotnet": {"dotnet"}, "go": {"go"}, "jdk": {"java", "javac"},
 		"fzf": {"fzf"}, "gh": {"gh"}, "btop": {"btop"}, "tailscale": {"tailscale"}, "ocaml": {"opam", "ocaml", "ocamlc"},
 		"lean": {"lean"}, "claude": {"claude"}, "codex": {"codex"}, "opencode": {"opencode"}, "pi": {"pi"},
+		"neovim": {"nvim"},
 	}[name]
+	if spec, ok := releaseBinaries[name]; ok && commands == nil {
+		commands = []string{spec.binary}
+	}
 	s := PackageStatus{Origin: "system"}
 	complete, any := len(commands) > 0, false
 	for _, command := range commands {
