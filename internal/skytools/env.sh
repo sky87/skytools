@@ -32,16 +32,24 @@ case $- in
     if [ -n "${BASH_VERSION:-}${ZSH_VERSION:-}" ] && [ -s "$NVM_DIR/nvm.sh" ]; then
       . "$NVM_DIR/nvm.sh"
     fi
-    if [ -s "$OPAMROOT/opam-init/init.sh" ]; then
-      . "$OPAMROOT/opam-init/init.sh" >/dev/null 2>&1
-    fi
-    # Hook only the copies skytools installed; both hooks are idempotent.
     _skytools_shell=
     if [ -n "${ZSH_VERSION:-}" ]; then
       _skytools_shell=zsh
     elif [ -n "${BASH_VERSION:-}" ]; then
       _skytools_shell=bash
     fi
+    # Tab completion first: it runs compinit if zsh has not, which the opam and
+    # zoxide hooks need for theirs.
+    if [ -n "$_skytools_shell" ] && [ -r "$HOME/.config/skytools/completion.$_skytools_shell" ]; then
+      . "$HOME/.config/skytools/completion.$_skytools_shell"
+    fi
+    # opam's init.zsh loads its zsh completion; init.sh loads the bash one.
+    if [ -n "${ZSH_VERSION:-}" ] && [ -s "$OPAMROOT/opam-init/init.zsh" ]; then
+      . "$OPAMROOT/opam-init/init.zsh" >/dev/null 2>&1
+    elif [ -s "$OPAMROOT/opam-init/init.sh" ]; then
+      . "$OPAMROOT/opam-init/init.sh" >/dev/null 2>&1
+    fi
+    # Hook only the copies skytools installed; both hooks are idempotent.
     if [ -n "$_skytools_shell" ] && [ -x "$HOME/.local/bin/direnv" ]; then
       eval "$("$HOME/.local/bin/direnv" hook "$_skytools_shell")"
     fi

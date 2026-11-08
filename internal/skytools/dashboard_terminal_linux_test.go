@@ -24,7 +24,8 @@ import (
 
 // These tests drive the real dashboard, installer subprocess and inventory
 // rescan through a Linux PTY. The HTTP transport serves only a local fixture;
-// neither the installed fixture executable nor any upstream binary is run.
+// no upstream binary is run, and the installed fixture is run only to generate
+// its shell completion, never by the inventory rescan.
 func TestDashboardTerminalInstallAndRescan(t *testing.T) {
 	m, requests := dashboardTerminalManager(t, `#!/bin/sh
 set -eu
@@ -33,6 +34,7 @@ while [ ! -e "$HOME/uv-fixture-continue" ]; do sleep 0.01; done
 mkdir -p "$HOME/.local/bin"
 cat > "$HOME/.local/bin/uv" <<'BINARY'
 #!/bin/sh
+if [ "$1" = generate-shell-completion ]; then echo "complete -F _uv uv"; exit 0; fi
 printf 'unexpected version probe\n' > "$HOME/uv-was-executed"
 exit 91
 BINARY

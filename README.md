@@ -177,6 +177,35 @@ backed up once as `<filename>.skytools.bak`; reruns do not duplicate the hook.
 Fish and PowerShell shell integration are not implemented. Profiles symlinked
 outside the home directory require adding the source hook manually.
 
+### Tab completion
+
+Interactive bash and zsh shells complete skytools' commands, flags, and
+`--only` tool names, including comma-separated lists
+(`skytools update --only node,oc<Tab>`). They also complete the managed tools
+that can generate their own scripts: `rg`, `fd`, `ast-grep` and `sg`, `delta`,
+`just`, `gh`, `tailscale`, `uv`, `uvx`, `codex`, `rustup`, `cargo`, `elan`,
+`dotnet`, `npm`, and `pnpm`. opam's completion comes from its own shell hook.
+Bun, lazygit, OpenCode, Claude Code, and pi have no completion generator.
+
+At the end of each `ensure`, `update`, or `setup`, skytools runs each managed
+executable's generator and writes the result to
+`~/.local/share/skytools/completions/{bash,zsh}`. A script is regenerated only
+when its executable (or, for cargo, the active toolchain) has changed, and it is
+removed when the tool is gone. System copies of these tools are left to their
+own packages' completion. The loaders are `~/.config/skytools/completion.bash`
+and `completion.zsh`, sourced by `env.sh`:
+
+- zsh: completion needs `compinit`. If your configuration has not run it when
+  the hook loads, skytools runs `compinit -i`. Tool scripts are autoloaded on
+  first use.
+- bash: each tool's script loads on its first Tab, so new shells do not parse
+  them all. gh and Tailscale use Cobra's bash completion, which needs the
+  `bash-completion` package (`_get_comp_words_by_ref`); the others work without
+  it.
+
+Tested on Debian bookworm with real Tab presses in interactive zsh, and in
+interactive bash with and without `bash-completion`.
+
 The Docker image also provides `sky-tools` as an alias for compatibility with the
 old name. When downloading the binary yourself, an optional equivalent is
 `ln -s skytools "$HOME/.local/bin/sky-tools"`.

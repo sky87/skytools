@@ -108,6 +108,10 @@ against GitHub's asset SHA-256 digest; Neovim keeps whole releases in
 and zoxide in interactive shells, and never edit the user's git configuration. Tailscale uses its checksummed official
 Linux binaries in `~/.local/bin`; never start `tailscaled`, install a service, or
 log in on the user's behalf.
+Shell completion (`completions.go`, `completion.bash`, `completion.zsh`): generate
+managed tools' scripts from their own executables at the end of a run, only when
+the executable changed, never at shell startup; keep generator failures from
+failing a run, and keep bash loading lazy and `env.sh` POSIX-sh safe.
 
 ## Development and validation
 

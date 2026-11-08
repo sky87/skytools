@@ -49,8 +49,14 @@ func (m *manager) setupShell() error {
 	if err := os.MkdirAll(m.at(".local/bin"), 0755); err != nil {
 		return err
 	}
-	if err := atomicWrite(m.at(".config/skytools/env.sh"), []byte(shellEnv), 0644); err != nil {
-		return err
+	for name, content := range map[string]string{"env.sh": shellEnv, "completion.bash": bashCompletion, "completion.zsh": zshCompletion} {
+		if err := atomicWrite(m.at(".config/skytools", name), []byte(content), 0644); err != nil {
+			return err
+		}
+	}
+	// Missing completion never makes a run fail.
+	if err := m.writeCompletions(); err != nil {
+		m.log("shell completion not updated: %v", err)
 	}
 	profiles, err := m.shellProfiles()
 	if err != nil {
