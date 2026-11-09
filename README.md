@@ -58,7 +58,8 @@ not currently supported.
 ```sh
 skytools                         # open the interactive package dashboard
 skytools ensure                  # install missing tools; leave installed versions alone
-skytools update                  # ensure tools exist, then explicitly update them
+skytools update                  # update every installed tool; installs nothing new
+skytools update --only node,go   # update these if installed; missing ones are skipped
 skytools self-update             # update skytools itself from GitHub's latest release
 skytools status                  # fast local installed/missing/incomplete inventory
 skytools status --versions       # explicitly run version commands
@@ -145,6 +146,15 @@ never produce update alerts. Finishing a run re-reads only the packages it touch
 There is no installation manifest or persistent version cache. `status` and
 redirected output remain local and filesystem-only; `status --versions` explicitly
 queries executables. Complete system/PATH installations are recognized too.
+
+`update` only touches tools that are already installed, completely or partly
+(partly installed ones are repaired). Without `--only` it updates every installed
+tool. Tools listed in `--only` that are not installed are skipped with a note
+naming the `ensure` command that installs them; misspelled names are still an
+error. Dependencies of the selected tools are still included, and installed if
+missing, so an updated tool keeps what it needs to run. A tool found only on PATH
+counts as installed, and updating it installs a managed copy in your home. Use
+`ensure` to install tools.
 
 `ensure` and `update` print numbered steps with installer output indented, then a
 summary naming what did not start. Upstream installers run with no controlling

@@ -20,7 +20,8 @@ from Bash to Go. Keep that source repository unchanged unless asked otherwise.
 - `scripts/`: container smoke checks and release cross-compilation.
 - `.github/workflows/`: Docker CI and tagged binary releases.
 
-Preserve the `ensure` (no updates), `update` (explicit updates), and `status`
+Preserve the `ensure` (no updates), `update` (explicit updates of installed tools
+only; listed tools that are missing are skipped, never installed), and `status`
 commands and existing home locations when changing the manager. Tools must run
 as the target user; never invoke sudo, with one exception: the dashboard may run
 the platform provider's install commands, through sudo unless already root, after

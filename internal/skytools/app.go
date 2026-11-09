@@ -23,7 +23,8 @@ Interactive
 
 Install and update
   ensure               Install missing tools; keep what is installed
-  update               Ensure, then update to the latest LTS or stable
+  update               Update installed tools to the latest LTS or stable;
+                       never installs tools that are missing
   self-update          Update skytools itself from the latest GitHub release
 
 Inspect
@@ -39,8 +40,8 @@ System and shell
   env                  Print shell environment: eval "$(skytools env)"
 
 --only takes a comma-separated list for ensure, update, status and deps, and
-includes dependencies. Tools install under $HOME. Only deps install changes
-system packages.
+includes dependencies. update skips listed tools that are not installed.
+Tools install under $HOME. Only deps install changes system packages.
 `
 
 func Run(ctx context.Context, args []string, out, errOut io.Writer, version string) int {
@@ -110,6 +111,21 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, version stri
 		return 0
 	}
 	tools := m.tools()
+	if command == "update" {
+		var skipped []string
+		only, skipped, err = m.installedForUpdate(tools, only)
+		if err != nil {
+			fmt.Fprintln(errOut, "skytools:", err)
+			return 2
+		}
+		if len(skipped) > 0 {
+			m.log("not installed, so not updated: %s (install with: skytools ensure --only %s)", strings.Join(skipped, ", "), strings.Join(skipped, ","))
+		}
+		if only == "" {
+			m.log("nothing to update: none of the selected tools is installed")
+			return 0
+		}
+	}
 	selected, err := selectTools(tools, only, command != "status")
 	if err != nil {
 		fmt.Fprintln(errOut, "skytools:", err)
@@ -165,6 +181,34 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, version stri
 		return 1
 	}
 	return 0
+}
+
+// installedForUpdate narrows update to tools already installed, completely or
+// partly (update repairs those): without --only that is every installed tool,
+// and listed tools that are missing are returned as skipped. Unknown names are
+// still errors. The result is an --only list; its dependencies are added later
+// as for ensure, so an installed tool keeps what it needs to run.
+func (m *manager) installedForUpdate(all []tool, only string) (string, []string, error) {
+	listed, err := selectTools(all, only, false)
+	if err != nil {
+		return "", nil, err
+	}
+	named := only != ""
+	for _, name := range strings.Split(only, ",") {
+		if strings.TrimSpace(name) == "all" {
+			named = false
+		}
+	}
+	var installed, skipped []string
+	for _, status := range m.scan(listed) {
+		switch {
+		case status.Installed || status.Partial:
+			installed = append(installed, status.Name)
+		case named:
+			skipped = append(skipped, status.Name)
+		}
+	}
+	return strings.Join(installed, ","), skipped, nil
 }
 
 // perform is shared by the command line and the tests: every tool gets the same
