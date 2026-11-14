@@ -268,6 +268,38 @@ func TestInventoryRecognizesSystemRootsBehindWrappers(t *testing.T) {
 		}
 	}
 }
+
+// .NET programs keep per-user data in ~/.dotnet even when skytools never
+// installed .NET there: an editor extension's certificate revocation cache, a
+// system SDK's first-run markers, and global tools.
+func TestInventoryIgnoresDotnetUserDataWithoutInstallation(t *testing.T) {
+	m := inventoryManager(t)
+	for _, path := range []string{".dotnet/corefx/cryptography/crls/7462804f.d5a68194.crl", ".dotnet/10.0.100.dotnetFirstUseSentinel", ".dotnet/tools/.store/.stage/marker"} {
+		inventoryFile(t, m, path, "data", 0644)
+	}
+	if s := m.scan([]tool{{name: "dotnet"}})[0]; s.Installed || s.Partial || s.Path != "" {
+		t.Fatalf("user data reported as installation: %+v", s)
+	}
+	bin, dotnetRoot := t.TempDir(), t.TempDir()
+	for _, path := range []string{filepath.Join(bin, "dotnet"), filepath.Join(dotnetRoot, "dotnet")} {
+		if err := atomicWrite(path, []byte("#!/bin/sh\nexit 99\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := atomicWrite(filepath.Join(dotnetRoot, "sdk/10.0.100/dotnet.dll"), []byte("SDK"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	m.env = []string{"PATH=" + bin, "DOTNET_ROOT=" + dotnetRoot}
+	if s := m.scan([]tool{{name: "dotnet"}})[0]; !s.Installed || s.Partial || s.Origin != "system" {
+		t.Fatalf("system SDK hidden by user data: %+v", s)
+	}
+	// An installer that stopped before writing the dotnet host is still partial.
+	m.env = []string{"PATH=/no-external-tools"}
+	inventoryFile(t, m, ".dotnet/sdk/10.0.100/dotnet.dll", "SDK", 0644)
+	if s := m.scan([]tool{{name: "dotnet"}})[0]; s.Installed || !s.Partial {
+		t.Fatalf("interrupted installation: %+v", s)
+	}
+}
 func BenchmarkInventoryEmpty(b *testing.B) {
 	m := inventoryManager(b)
 	tools := m.tools()

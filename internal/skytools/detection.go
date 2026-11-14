@@ -244,12 +244,20 @@ func (m *manager) managedStatus(name string) PackageStatus {
 		any = any || exists(m.at(".nvm/nvm.sh")) || exists(m.at(".nvm/current"))
 	case "dotnet":
 		complete = complete && s.Version != ""
+		// ~/.dotnet is also .NET's per-user data folder: any .NET program, such
+		// as an editor extension or a system SDK, keeps caches, first-run
+		// markers, and global tools there. Only the installer's own trees show
+		// an interrupted installation in the home.
+		for _, path := range []string{".dotnet/host", ".dotnet/shared", ".dotnet/sdk"} {
+			_, err := os.Lstat(m.at(path))
+			any = any || err == nil
+		}
 	case "go":
 		complete = complete && goVersion.MatchString(s.Version)
 	case "neovim":
 		complete = complete && s.Version != "" && neovimTree(distributionRoot(m.at(".neovim/current/bin/nvim")))
 	}
-	footprint := map[string]string{"rust": ".rustup", "node": ".nvm", "bun": ".bun", "dotnet": ".dotnet", "go": ".go", "jdk": ".jdk", "fzf": ".fzf", "ocaml": ".opam", "lean": ".elan", "opencode": ".opencode", "neovim": ".neovim"}[name]
+	footprint := map[string]string{"rust": ".rustup", "node": ".nvm", "bun": ".bun", "go": ".go", "jdk": ".jdk", "fzf": ".fzf", "ocaml": ".opam", "lean": ".elan", "opencode": ".opencode", "neovim": ".neovim"}[name]
 	if footprint != "" {
 		_, err := os.Lstat(m.at(footprint))
 		any = any || err == nil
